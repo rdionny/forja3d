@@ -49,7 +49,7 @@ def _comando_agente(pedido: str, material: str | None) -> int:
                 print(f"    {item['severidade']} {item['codigo']}: {item['mensagem']}", flush=True)
 
     config = configuracao.carregar()
-    configurar_logs(config.ia.api_key)
+    configurar_logs(*config.chaves)
     projeto = Projeto.criar(config.pasta_projetos)
     agente = Orquestrador(config, carregar_perfil(), ClienteIA(config.ia), projeto, Terminal())
     print(agente.processar(pedido))

@@ -32,6 +32,10 @@ QLabel#suave {{ color: {SUAVE}; }}
 QLabel#medida {{ color: {TEXTO}; font-weight: 600; }}
 QLabel#etapa {{ color: {ACENTO_FORTE}; font-weight: 600; }}
 QLabel#aviso {{ color: {ALERTA}; }}
+QLabel#erro {{ color: {ERRO}; }}
+QLabel#tituloConceito {{ font-size: 14px; font-weight: 600; }}
+QLabel#imagemConceito {{ background: {FUNDO_3D}; border: 1px solid {BORDA}; border-radius: 6px; color: {SUAVE}; }}
+QFrame#cartaoConceito {{ background: {ELEVADO}; border: 1px solid {BORDA}; border-radius: 8px; }}
 QFrame#bolhaUsuario {{ background: {BOLHA_USUARIO}; border-radius: 10px; }}
 QFrame#bolhaAgente {{ background: {BOLHA_AGENTE}; border-radius: 10px; }}
 QFrame#bolhaErro {{ background: #3a2228; border: 1px solid {ERRO}; border-radius: 10px; }}
@@ -71,6 +75,10 @@ QPushButton#primario:hover {{ background: {ACENTO_FORTE}; }}
 QPushButton#primario:disabled {{ background: {ELEVADO}; color: #636a78; }}
 QPushButton#plano {{ background: transparent; border: none; color: {SUAVE}; padding: 4px 8px; }}
 QPushButton#plano:hover {{ color: {TEXTO}; background: {ELEVADO}; }}
+QPushButton#icone {{ background: transparent; border: none; border-radius: 6px; padding: 0; }}
+QPushButton#icone:hover {{ background: {ELEVADO}; }}
+QPushButton#icone:pressed {{ background: {BORDA}; }}
+QListWidget#listaProvedores {{ background: {ELEVADO}; border: 1px solid {BORDA}; border-radius: 6px; }}
 QFrame#sugestao {{ background: {ELEVADO}; border: 1px solid {BORDA}; border-radius: 6px; }}
 QFrame#sugestao:hover {{ border-color: {ACENTO}; }}
 QListWidget {{ background: transparent; border: none; outline: none; }}

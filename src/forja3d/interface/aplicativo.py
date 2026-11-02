@@ -55,7 +55,7 @@ def _tratar_excecao(tipo, valor, rastro) -> None:  # noqa: ANN001
 def executar() -> int:
     os.environ.setdefault("QT_API", "pyside6")
     config = configuracao.carregar()
-    configurar_logs(config.ia.api_key)
+    configurar_logs(*config.chaves)
     sys.excepthook = _tratar_excecao
 
     aplicativo = QApplication(sys.argv)

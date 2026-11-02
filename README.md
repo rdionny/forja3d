@@ -22,6 +22,8 @@ Copie `config/ia_padrao.example.toml` para `config/ia_padrao.toml` e preencha a 
 3. Escolha material, qualidade, paredes e preenchimento, e clique em **Aprovar e preparar**.
 4. Clique em **Exportar G-code** e salve no **cartão SD**. A impressora não lê pen drive.
 
+Também dá para começar por uma imagem: clique em **Imagem de referência**, ou arraste e cole a imagem no chat. O app mostra pelo menos 2 opções de conceito, cada uma com a peça montada e a vista explodida. Depois da escolha, o agente pergunta o que faltar e modela a peça. As imagens são só ilustração e não têm medidas reais.
+
 No visualizador, arraste para girar, use a roda para aproximar e Shift + arrastar para mover.
 
 ## O que protege a peça e a impressora

@@ -19,6 +19,12 @@ def gravar_json(caminho: Path, dados: Any) -> None:
     temporario.replace(caminho)
 
 
+def gravar_bytes(caminho: Path, dados: bytes) -> None:
+    temporario = caminho.with_name(caminho.name + ".tmp")
+    temporario.write_bytes(dados)
+    temporario.replace(caminho)
+
+
 def ler_json(caminho: Path, padrao: Any = None) -> Any:
     if not caminho.exists():
         return padrao
@@ -111,8 +117,30 @@ class Projeto:
         resumos = sorted(pasta.glob("*/resumo.json"), key=lambda p: p.stat().st_mtime, reverse=True)
         return (resumos[0].parent, ler_json(resumos[0])) if resumos else None
 
-    def registrar_conversa(self, papel: str, texto: str) -> None:
+    def guardar_referencia(self, dados: bytes) -> Path:
+        pasta = self.pasta / "referencias"
+        pasta.mkdir(exist_ok=True)
+        caminho = pasta / f"referencia_{len(list(pasta.glob('referencia_*.png'))) + 1:02d}.png"
+        gravar_bytes(caminho, dados)
+        return caminho
+
+    def nova_rodada_de_conceitos(self) -> Path:
+        pasta = self.pasta / "conceitos"
+        pasta.mkdir(exist_ok=True)
+        rodada = pasta / f"rodada_{len(list(pasta.glob('rodada_*'))) + 1:02d}"
+        rodada.mkdir()
+        return rodada
+
+    def salvar_conceito_escolhido(self, conceito: dict[str, Any]) -> None:
+        gravar_json(self.pasta / "conceitos" / "conceito_escolhido.json", conceito)
+
+    def conceito_escolhido(self) -> dict[str, Any] | None:
+        return ler_json(self.pasta / "conceitos" / "conceito_escolhido.json")
+
+    def registrar_conversa(self, papel: str, texto: str, imagem: str | None = None) -> None:
         registro = {"papel": papel, "texto": texto, "em": datetime.now().isoformat(timespec="seconds")}
+        if imagem:
+            registro["imagem"] = imagem
         with open(self.pasta / "conversa.jsonl", "a", encoding="utf-8") as arquivo:
             arquivo.write(json.dumps(registro, ensure_ascii=False) + "\n")
 

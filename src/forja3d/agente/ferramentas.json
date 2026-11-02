@@ -112,7 +112,8 @@
             "type": "number"
           },
           "orientacao_impressao": {
-            "type": "string"
+            "type": "string",
+            "description": "Uma única orientação, igual à do modelo sobre Z = 0: qual face fica na mesa. O fatiador não gira a peça."
           },
           "premissas": {
             "type": "array",

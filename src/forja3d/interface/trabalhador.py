@@ -63,8 +63,15 @@ class Trabalhador(QObject):
 
     @Slot(str)
     def processar(self, texto: str) -> None:
+        self._atender(lambda: self.orquestrador.processar(texto))
+
+    @Slot(object)
+    def processar_conceito(self, conceito: dict[str, Any]) -> None:
+        self._atender(lambda: self.orquestrador.processar_conceito(conceito))
+
+    def _atender(self, pedido: Callable[[], str]) -> None:
         try:
-            self.resposta.emit(self.orquestrador.processar(texto))
+            self.resposta.emit(pedido())
         except ErroIA as falha:
             self.erro.emit(str(falha))
         except Exception:

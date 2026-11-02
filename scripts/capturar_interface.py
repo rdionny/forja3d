@@ -33,7 +33,7 @@ analisador.add_argument("--projeto", help="abre uma peça salva, sem chamar a IA
 dados = analisador.parse_args()
 
 config = configuracao.carregar()
-configurar_logs(config.ia.api_key)
+configurar_logs(*config.chaves)
 aplicativo = QApplication(sys.argv)
 aplicativo.setStyleSheet(tema.ESTILO)
 janela = JanelaPrincipal(config, carregar_perfil())

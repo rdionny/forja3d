@@ -7,7 +7,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, QThread, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -25,11 +26,13 @@ from PySide6.QtWidgets import (
 )
 
 from forja3d import configuracao
+from forja3d.conceitos.referencia import ReferenciaInvalida, preparar_referencia
 from forja3d.configuracao import Configuracao
 from forja3d.fatiamento.exportacao import ExportacaoBloqueada, exportar_gcode, nome_sugerido, unidades_removiveis
 from forja3d.fatiamento.orca import ParametrosFatiamento, localizar_orca
 from forja3d.ia.cliente import ClienteIA, ErroIA
 from forja3d.interface import tema
+from forja3d.interface.dialogo_conceitos import DialogoConceitos
 from forja3d.interface.dialogo_config import DialogoConfig
 from forja3d.interface.painel_3d import Painel3D
 from forja3d.interface.painel_chat import PainelChat
@@ -37,15 +40,28 @@ from forja3d.interface.painel_checks import PainelChecks
 from forja3d.interface.painel_versoes import PainelVersoes
 from forja3d.interface.trabalhador import Trabalhador
 from forja3d.projetos.armazenamento import Projeto
+from forja3d.registro import proteger_chaves
 
 log = logging.getLogger(__name__)
 
+ICONE_CONFIGURACOES = Path(__file__).parent / "icones" / "engrenagem.svg"
 QUALIDADES = (("Padrão, 0,20 mm", "padrao"), ("Ótima, 0,16 mm", "otima"), ("Fina, 0,12 mm", "fina"), ("Rascunho, 0,24 mm", "rascunho"))
 AJUSTES_POR_CARGA = {"nenhuma": (2, 15), "leve": (3, 15), "media": (4, 25), "alta": (5, 40)}
 
 
+class SemRodaSemFoco(QObject):
+    """Passar a roda do mouse por cima não pode trocar uma opção de impressão sem ninguém notar."""
+
+    def eventFilter(self, alvo: QObject, evento: QEvent) -> bool:  # noqa: N802 - nome definido pelo Qt.
+        if evento.type() == QEvent.Type.Wheel and not alvo.hasFocus():
+            evento.ignore()
+            return True
+        return False
+
+
 class JanelaPrincipal(QMainWindow):
     _pedir_processar = Signal(str)
+    _pedir_conceito = Signal(object)
     _pedir_fatiar = Signal(object)
     _estado_ia = Signal(bool, str)
 
@@ -128,7 +144,10 @@ class JanelaPrincipal(QMainWindow):
         linha.addStretch(1)
         linha.addWidget(QLabel("Creality Ender-3 V3 SE, bico de 0,4 mm", objectName="suave"))
         linha.addSpacing(10)
-        self.botao_config = QPushButton("Configurações", objectName="plano")
+        self.botao_config = QPushButton(objectName="icone", toolTip="Configurações: modelos e provedores de IA", accessibleName="Configurações")
+        self.botao_config.setIcon(QIcon(str(ICONE_CONFIGURACOES)))
+        self.botao_config.setIconSize(QSize(20, 20))
+        self.botao_config.setFixedSize(32, 32)
         self.botao_config.clicked.connect(self._abrir_configuracoes)
         linha.addWidget(self.botao_config)
         return topo
@@ -153,6 +172,10 @@ class JanelaPrincipal(QMainWindow):
         self.spin_preenchimento.setFixedWidth(76)
         self.caixa_suporte = QCheckBox("Suporte")
         self.caixa_brim = QCheckBox("Brim", toolTip="Aba na primeira camada, que ajuda a peça a aderir à mesa")
+        self._filtro_roda = SemRodaSemFoco(self)
+        for campo in (self.combo_material, self.combo_qualidade, self.spin_paredes, self.spin_preenchimento):
+            campo.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            campo.installEventFilter(self._filtro_roda)
         for rotulo, campo in (("Material", self.combo_material), ("Qualidade", self.combo_qualidade), ("Paredes", self.spin_paredes), ("Preenchimento", self.spin_preenchimento)):
             opcoes.addWidget(QLabel(rotulo, objectName="suave"))
             opcoes.addWidget(campo)
@@ -179,12 +202,15 @@ class JanelaPrincipal(QMainWindow):
     def _conectar(self) -> None:
         self.painel_chat.enviado.connect(self._enviar)
         self.painel_chat.cancelar.connect(self._cancelar)
+        self.painel_chat.imagem_pedida.connect(self._escolher_imagem)
+        self.painel_chat.imagem_recebida.connect(self._abrir_conceitos)
         self.painel_versoes.nova_peca.connect(self._nova_peca)
         self.painel_versoes.projeto_escolhido.connect(self.abrir_projeto)
         self.painel_versoes.versao_escolhida.connect(self._ver_versao)
         self.painel_versoes.restaurar_pedido.connect(self._restaurar_versao)
 
         self._pedir_processar.connect(self.trabalhador.processar)
+        self._pedir_conceito.connect(self.trabalhador.processar_conceito)
         self._pedir_fatiar.connect(self.trabalhador.aprovar_e_fatiar)
         self.trabalhador.resposta.connect(self._ao_responder)
         self.trabalhador.erro.connect(self._ao_errar)
@@ -258,6 +284,7 @@ class JanelaPrincipal(QMainWindow):
     def _verificar_endpoint(self) -> None:
         self.rotulo_ia.setText("IA: verificando…")
         ia = self.config.ia
+        self.rotulo_ia.setToolTip(f"Chat: {ia.provedor}, {ia.modelo}\nImagem: {ia.provedor_imagem}, {ia.modelo_imagem}")
         fabrica = self._fabrica_cliente
 
         def executar() -> None:
@@ -303,7 +330,8 @@ class JanelaPrincipal(QMainWindow):
         self.rotulo_projeto.setText(projeto.titulo)
         self.painel_chat.limpar()
         for registro in projeto.ler_conversa():
-            self.painel_chat.adicionar("usuario" if registro["papel"] == "usuario" else "agente", registro["texto"])
+            imagem = projeto.pasta / registro["imagem"] if registro.get("imagem") else None
+            self.painel_chat.adicionar("usuario" if registro["papel"] == "usuario" else "agente", registro["texto"], imagem)
         self.painel_versoes.atualizar_versoes(projeto, agente.versao_atual)
         if agente.especificacao:
             self._ajustar_por_especificacao(agente.especificacao.model_dump())
@@ -344,18 +372,52 @@ class JanelaPrincipal(QMainWindow):
 
     # ---------- Agente ----------
 
-    def _enviar(self, texto: str) -> None:
-        if self.ocupado:
-            return
+    def _garantir_projeto(self, titulo: str) -> Projeto:
         if self.projeto is None:
-            self.projeto = Projeto.criar(self.config.pasta_projetos, texto[:60])
+            self.projeto = Projeto.criar(self.config.pasta_projetos, titulo)
             self.trabalhador.abrir(self.projeto)
             self.rotulo_projeto.setText(self.projeto.titulo)
             self._recarregar_projetos()
+        return self.projeto
+
+    def _enviar(self, texto: str) -> None:
+        if self.ocupado:
+            return
+        self._garantir_projeto(texto[:60])
         self.painel_chat.adicionar("usuario", texto)
         self.orquestrador.preparar_operacao()
         self._definir_ocupado(True)
         self._pedir_processar.emit(texto)
+
+    def _escolher_imagem(self) -> None:
+        caminho, _ = QFileDialog.getOpenFileName(self, "Imagem de referência", str(Path.home() / "Pictures"), "Imagens (*.png *.jpg *.jpeg *.webp)")
+        if caminho:
+            self._abrir_conceitos(Path(caminho))
+
+    def _abrir_conceitos(self, origem: bytes | Path) -> None:
+        if self.ocupado:
+            return
+        try:
+            referencia = preparar_referencia(origem)
+        except ReferenciaInvalida as erro:
+            QMessageBox.warning(self, "Imagem de referência", str(erro))
+            return
+        dialogo = DialogoConceitos(referencia, self._fabrica_cliente(self.config.ia), lambda: self._garantir_projeto("Peça a partir de imagem"), self)
+        aceito = dialogo.exec()
+        conceito, quer_configuracoes = dialogo.conceito, dialogo.quer_configuracoes
+        dialogo.deleteLater()
+        if aceito and conceito:
+            self._seguir_com_conceito(conceito)
+        elif quer_configuracoes:
+            self._abrir_configuracoes()
+
+    def _seguir_com_conceito(self, conceito: dict[str, Any]) -> None:
+        self.painel_chat.adicionar("usuario", f"Escolhi o conceito: {conceito['opcao']['titulo']}.", self.projeto.pasta / conceito["imagem"])
+        self.rotulo_projeto.setText(self.projeto.titulo)
+        self._recarregar_projetos()
+        self.orquestrador.preparar_operacao()
+        self._definir_ocupado(True)
+        self._pedir_conceito.emit(conceito)
 
     def _cancelar(self) -> None:
         if self.orquestrador is not None:
@@ -424,8 +486,27 @@ class JanelaPrincipal(QMainWindow):
             self.rotulo_resumo.setText("As opções mudaram. Clique em Aprovar e preparar para gerar o G-code de novo.")
             self._atualizar_botoes()
 
+    def _confirmar_material(self) -> bool:
+        """O G-code é feito para um material: preparar em outro exige uma decisão explícita."""
+        especificacao = self.orquestrador.especificacao
+        escolhido = self.combo_material.currentText()
+        if especificacao is None or especificacao.material == escolhido:
+            return True
+        resposta = QMessageBox.question(
+            self,
+            "Material diferente",
+            f"A peça foi especificada em {especificacao.material}, mas o seletor está em {escolhido}.\n\n"
+            f"Preparar em {escolhido}? Se escolher Não, o seletor volta para {especificacao.material}.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if resposta == QMessageBox.StandardButton.Yes:
+            return True
+        self.combo_material.setCurrentText(especificacao.material)
+        return False
+
     def _aprovar_e_fatiar(self) -> None:
-        if self.ocupado or self.orquestrador is None:
+        if self.ocupado or self.orquestrador is None or not self._confirmar_material():
             return
         self.orquestrador.preparar_operacao()
         self._definir_ocupado(True)
@@ -437,6 +518,7 @@ class JanelaPrincipal(QMainWindow):
         if not v["aprovado"]:
             return "G-code reprovado na validação. Veja os motivos na verificação."
         partes = [
+            resumo["parametros"]["material"],
             v.get("tempo", "tempo não informado"),
             f"{tema.numero(v['filamento_g'], 1)} g" if "filamento_g" in v else "",
             f"{v['camadas']} camadas",
@@ -491,9 +573,10 @@ class JanelaPrincipal(QMainWindow):
     # ---------- Geral ----------
 
     def _abrir_configuracoes(self) -> None:
-        dialogo = DialogoConfig(self.config, self)
+        dialogo = DialogoConfig(self.config, self, self._fabrica_cliente)
         if dialogo.exec():
             self.config = configuracao.carregar()
+            proteger_chaves(*self.config.chaves)
             self.trabalhador.config = self.config
             if self.projeto is not None:
                 self.trabalhador.abrir(self.projeto)

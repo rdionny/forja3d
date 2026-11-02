@@ -2,6 +2,7 @@
 endpoint = "http://129.151.36.250:8317/v1"
 api_key = ""
 modelo = "gemini-3.8-flash-high"
+modelo_imagem = "gemini-3.1-flash-image"
 timeout_s = 240
 max_tentativas_rede = 2
 temperatura = 0.2

@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from forja3d.agente.especificacao import Especificacao, problemas_de_tamanho
 from forja3d.cad.executor import executar_script
+from forja3d.conceitos.fluxo import mensagem_do_conceito
 from forja3d.configuracao import Configuracao
 from forja3d.fatiamento.orca import ErroFatiamento, ParametrosFatiamento, fatiar
 from forja3d.ia.cliente import Cancelado, ChamadaFerramenta, ClienteIA
@@ -65,9 +66,14 @@ def _sem_imagens(mensagens: list[dict[str, Any]]) -> list[dict[str, Any]]:
     limpas = []
     for mensagem in mensagens:
         if isinstance(mensagem.get("content"), list):
-            mensagem = {**mensagem, "content": "[Sistema] Vistas anteriores da peça, removidas do histórico."}
+            mensagem = {**mensagem, "content": "[Sistema] Imagens anteriores, removidas do histórico."}
         limpas.append(mensagem)
     return limpas
+
+
+def _parte_imagem(caminho: Path) -> dict[str, Any]:
+    dados = base64.b64encode(caminho.read_bytes()).decode()
+    return {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{dados}"}}
 
 
 def _normalizar_erro(texto: str) -> str:
@@ -150,10 +156,20 @@ class Orquestrador:
         Não limpa o cancelamento aqui: um clique em Cancelar logo depois de enviar chega antes
         de esta thread começar. Quem inicia a operação chama `preparar_operacao` antes.
         """
+        self.projeto.registrar_conversa("usuario", texto)
+        return self._atender(texto)
+
+    def processar_conceito(self, conceito: dict[str, Any]) -> str:
+        """Segue a partir do conceito que o usuário escolheu no diálogo de imagem de referência."""
+        self.projeto.registrar_conversa("usuario", f"Escolhi o conceito: {conceito['opcao']['titulo']}.", conceito["imagem"])
+        self.mensagens = _sem_imagens(self.mensagens)
+        return self._atender(mensagem_do_conceito(conceito))
+
+    def _atender(self, texto: str) -> str:
         self._falhas.clear()
         self._forcar_texto = None
-        self.projeto.registrar_conversa("usuario", texto)
         self.mensagens.append({"role": "user", "content": texto})
+        self._anexar_conceito_se_faltar()
         self._proxima = "modelagem" if self.especificacao else "especificacao"
         try:
             resposta = self._loop()
@@ -217,9 +233,25 @@ class Orquestrador:
         conteudo: list[dict[str, Any]] = [
             {"type": "text", "text": f"[Sistema] Vistas da versão {self.versao_atual}: " + ", ".join(i.stem for i in imagens) + "."}
         ]
-        for imagem in imagens:
-            dados = base64.b64encode(imagem.read_bytes()).decode()
-            conteudo.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{dados}"}})
+        conteudo += [_parte_imagem(imagem) for imagem in imagens]
+        conceito = self.projeto.conceito_escolhido()
+        if conceito:
+            conteudo += [
+                {"type": "text", "text": "[Sistema] Imagem do conceito escolhido, para comparar. Ela é ilustração, não medida."},
+                _parte_imagem(self.projeto.pasta / conceito["imagem"]),
+            ]
+        self.mensagens.append({"role": "user", "content": conteudo})
+
+    def _anexar_conceito_se_faltar(self) -> None:
+        # As imagens não vão para o histórico em disco: depois de reabrir a peça, precisam voltar.
+        conceito = self.projeto.conceito_escolhido()
+        if not conceito or any(isinstance(m.get("content"), list) for m in self.mensagens):
+            return
+        conteudo = [
+            {"type": "text", "text": "[Sistema] Imagem de referência do usuário e imagem do conceito escolhido, nesta ordem."},
+            _parte_imagem(self.projeto.pasta / conceito["referencia"]),
+            _parte_imagem(self.projeto.pasta / conceito["imagem"]),
+        ]
         self.mensagens.append({"role": "user", "content": conteudo})
 
     def _registrar_falha(self, chave: str) -> None:

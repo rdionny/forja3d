@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import tomllib
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -11,11 +12,20 @@ from typing import Any
 RAIZ = Path(__file__).resolve().parents[2]
 PASTA_CONFIG = RAIZ / "config"
 ORCA_PADRAO = RAIZ / "ferramentas" / "OrcaSlicer_2.4.2" / "orca-slicer.exe"
+MODELO_IMAGEM_PADRAO = "gemini-3.1-flash-image"
+PROVEDOR_PADRAO = "Padrão"
 
 
 def pasta_usuario() -> Path:
     base = os.environ.get("APPDATA")
     return (Path(base) if base else Path.home()) / "Forja3D"
+
+
+@dataclass(frozen=True)
+class Provedor:
+    nome: str
+    endpoint: str
+    api_key: str = field(default="", repr=False)
 
 
 @dataclass(frozen=True)
@@ -27,6 +37,12 @@ class ConfigIA:
     max_tentativas_rede: int = 2
     temperatura: float = 0.2
     esforco: dict[str, str] = field(default_factory=dict)
+    modelo_imagem: str = MODELO_IMAGEM_PADRAO
+    provedor: str = PROVEDOR_PADRAO
+    provedor_imagem: str = PROVEDOR_PADRAO
+    # Vazios: a imagem usa o mesmo provedor do chat.
+    endpoint_imagem: str = ""
+    api_key_imagem: str = field(default="", repr=False)
 
 
 @dataclass(frozen=True)
@@ -36,6 +52,17 @@ class Configuracao:
     max_reparos_mesmo_erro: int = 3
     caminho_orca: Path = ORCA_PADRAO
     pasta_projetos: Path = RAIZ / "projetos"
+    provedores: tuple[Provedor, ...] = ()
+
+    @property
+    def todos_os_provedores(self) -> tuple[Provedor, ...]:
+        return self.provedores or (Provedor(self.ia.provedor, self.ia.endpoint, self.ia.api_key),)
+
+    @property
+    def chaves(self) -> tuple[str, ...]:
+        """Todas as chaves em uso, para o filtro de logs."""
+        todas = (self.ia.api_key, self.ia.api_key_imagem, *(p.api_key for p in self.provedores))
+        return tuple(dict.fromkeys(c for c in todas if c))
 
 
 def _ler_toml(caminho: Path) -> dict[str, Any]:
@@ -65,31 +92,61 @@ def carregar() -> Configuracao:
         ("FORJA3D_IA_ENDPOINT", "endpoint"),
         ("FORJA3D_IA_API_KEY", "api_key"),
         ("FORJA3D_IA_MODELO", "modelo"),
+        ("FORJA3D_IA_MODELO_IMAGEM", "modelo_imagem"),
     ):
         if os.environ.get(variavel):
             ia[chave] = os.environ[variavel]
+
+    # `[ia]` guarda o provedor Padrão. Os demais ficam em `[[provedores]]`.
+    padrao = Provedor(PROVEDOR_PADRAO, str(ia.get("endpoint", "")).rstrip("/"), str(ia.get("api_key", "")))
+    provedores = [padrao]
+    for item in dados.get("provedores", []):
+        if item.get("nome") and item["nome"] != PROVEDOR_PADRAO:
+            provedores.append(Provedor(str(item["nome"]), str(item.get("endpoint", "")).rstrip("/"), str(item.get("api_key", ""))))
+    por_nome = {p.nome: p for p in provedores}
+    chat = por_nome.get(str(ia.get("provedor")), padrao)
+    imagem = por_nome.get(str(ia.get("provedor_imagem")), padrao)
 
     agente = dados.get("agente", {})
     app = dados.get("app", {})
     return Configuracao(
         ia=ConfigIA(
-            endpoint=str(ia.get("endpoint", "")).rstrip("/"),
-            api_key=str(ia.get("api_key", "")),
+            endpoint=chat.endpoint,
+            api_key=chat.api_key,
             modelo=str(ia.get("modelo", "")),
             timeout_s=float(ia.get("timeout_s", 240)),
             max_tentativas_rede=int(ia.get("max_tentativas_rede", 2)),
             temperatura=float(ia.get("temperatura", 0.2)),
             esforco=dict(ia.get("esforco", {})),
+            modelo_imagem=str(ia.get("modelo_imagem") or MODELO_IMAGEM_PADRAO),
+            provedor=chat.nome,
+            provedor_imagem=imagem.nome,
+            endpoint_imagem=imagem.endpoint,
+            api_key_imagem=imagem.api_key,
         ),
         max_chamadas_por_pedido=int(agente.get("max_chamadas_por_pedido", 25)),
         max_reparos_mesmo_erro=int(agente.get("max_reparos_mesmo_erro", 3)),
         caminho_orca=Path(app["caminho_orca"]) if app.get("caminho_orca") else ORCA_PADRAO,
         pasta_projetos=Path(app["pasta_projetos"]) if app.get("pasta_projetos") else RAIZ / "projetos",
+        provedores=tuple(provedores),
     )
 
 
-def salvar_preferencias(endpoint: str, api_key: str, modelo: str, caminho_orca: str, pasta_projetos: str) -> Path:
-    """Grava as preferências da tela de configurações. `json.dumps` gera strings válidas em TOML."""
+def salvar_preferencias(
+    endpoint: str,
+    api_key: str,
+    modelo: str,
+    caminho_orca: str,
+    pasta_projetos: str,
+    modelo_imagem: str = MODELO_IMAGEM_PADRAO,
+    provedores: Sequence[Provedor] = (),
+    provedor: str = PROVEDOR_PADRAO,
+    provedor_imagem: str = PROVEDOR_PADRAO,
+) -> Path:
+    """Grava as preferências da tela de configurações. `json.dumps` gera strings válidas em TOML.
+
+    `endpoint` e `api_key` são os do provedor Padrão. `provedores` traz os demais.
+    """
     destino = pasta_usuario() / "config.toml"
     destino.parent.mkdir(parents=True, exist_ok=True)
     linhas = [
@@ -97,12 +154,23 @@ def salvar_preferencias(endpoint: str, api_key: str, modelo: str, caminho_orca: 
         f"endpoint = {json.dumps(endpoint)}",
         f"api_key = {json.dumps(api_key)}",
         f"modelo = {json.dumps(modelo)}",
+        f"modelo_imagem = {json.dumps(modelo_imagem)}",
+        f"provedor = {json.dumps(provedor)}",
+        f"provedor_imagem = {json.dumps(provedor_imagem)}",
         "",
         "[app]",
         f"caminho_orca = {json.dumps(caminho_orca)}",
         f"pasta_projetos = {json.dumps(pasta_projetos)}",
         "",
     ]
+    for item in provedores:
+        linhas += [
+            "[[provedores]]",
+            f"nome = {json.dumps(item.nome)}",
+            f"endpoint = {json.dumps(item.endpoint)}",
+            f"api_key = {json.dumps(item.api_key)}",
+            "",
+        ]
     temporario = destino.with_suffix(".tmp")
     temporario.write_text("\n".join(linhas), encoding="utf-8")
     temporario.replace(destino)

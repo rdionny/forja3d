@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QBuffer, QIODevice, QMimeData, Qt, QTimer, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -16,6 +18,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from forja3d.conceitos.referencia import EXTENSOES
+
+LARGURA_MINIATURA = 320
 SUGESTOES = (
     "Suporte em L para parede, em PLA: base de 40 × 30 × 4 mm, parede de 30 mm de altura e 2 furos para parafuso M4 na base",
     "Caixa de 80 × 60 × 30 mm com tampa de encaixe, paredes de 2 mm, em PLA",
@@ -23,12 +28,28 @@ SUGESTOES = (
 )
 
 
+def imagem_do_mime(mime: QMimeData) -> bytes | Path | None:
+    """Arquivo local ou imagem copiada. Nunca busca nada na internet."""
+    for url in mime.urls():
+        if url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() in EXTENSOES:
+            return Path(url.toLocalFile())
+    if mime.hasImage():
+        buffer = QBuffer()
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        mime.imageData().save(buffer, "PNG")
+        return bytes(buffer.data())
+    return None
+
+
 class Bolha(QFrame):
-    def __init__(self, papel: str, texto: str) -> None:
+    def __init__(self, papel: str, texto: str, imagem: Path | None = None) -> None:
         nomes = {"usuario": "bolhaUsuario", "agente": "bolhaAgente", "erro": "bolhaErro"}
         super().__init__(objectName=nomes[papel])
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 9, 12, 9)
+        if imagem is not None and imagem.exists():
+            miniatura = QPixmap(str(imagem)).scaledToWidth(LARGURA_MINIATURA, Qt.TransformationMode.SmoothTransformation)
+            layout.addWidget(QLabel(pixmap=miniatura))
         self.rotulo = QLabel(texto, wordWrap=True)
         self.rotulo.setTextFormat(Qt.TextFormat.PlainText if papel == "usuario" else Qt.TextFormat.MarkdownText)
         self.rotulo.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -56,6 +77,7 @@ class CartaoSugestao(QFrame):
 
 class CampoTexto(QPlainTextEdit):
     enviar = Signal()
+    imagem_recebida = Signal(object)
 
     def keyPressEvent(self, evento) -> None:  # noqa: ANN001, N802 - nome definido pelo Qt.
         enter = evento.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
@@ -64,13 +86,27 @@ class CampoTexto(QPlainTextEdit):
             return
         super().keyPressEvent(evento)
 
+    def canInsertFromMimeData(self, origem: QMimeData) -> bool:  # noqa: N802 - nome definido pelo Qt.
+        return imagem_do_mime(origem) is not None or super().canInsertFromMimeData(origem)
+
+    def insertFromMimeData(self, origem: QMimeData) -> None:  # noqa: N802 - nome definido pelo Qt.
+        # Colar e soltar passam por aqui.
+        imagem = imagem_do_mime(origem)
+        if imagem is not None:
+            self.imagem_recebida.emit(imagem)
+        else:
+            super().insertFromMimeData(origem)
+
 
 class PainelChat(QWidget):
     enviado = Signal(str)
     cancelar = Signal()
+    imagem_pedida = Signal()
+    imagem_recebida = Signal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent, objectName="painel")
+        self.setAcceptDrops(True)
         self._ocupado = False
         self._seguindo_o_fim = False
         self._inicio_etapa = 0.0
@@ -106,11 +142,22 @@ class PainelChat(QWidget):
         self.linha_etapa.hide()
         layout.addWidget(self.linha_etapa)
 
+        self.botao_imagem = QPushButton(
+            "Imagem de referência",
+            toolTip="Envie uma imagem para ver opções de conceito, com a peça montada e a vista explodida. Também dá para arrastar ou colar.",
+        )
+        self.botao_imagem.clicked.connect(self.imagem_pedida)
+        linha_imagem = QHBoxLayout()
+        linha_imagem.addWidget(self.botao_imagem)
+        linha_imagem.addStretch(1)
+        layout.addLayout(linha_imagem)
+
         entrada = QHBoxLayout()
         entrada.setSpacing(8)
         self.campo = CampoTexto(placeholderText="Descreva a peça ou peça um ajuste…")
         self.campo.setFixedHeight(66)
         self.campo.enviar.connect(self._enviar)
+        self.campo.imagem_recebida.connect(self._receber_imagem)
         self.botao_enviar = QPushButton("Enviar", objectName="primario")
         self.botao_enviar.setFixedHeight(66)
         self.botao_enviar.clicked.connect(self._enviar)
@@ -143,9 +190,23 @@ class PainelChat(QWidget):
             self.campo.clear()
             self.enviado.emit(texto)
 
-    def adicionar(self, papel: str, texto: str) -> None:
+    def _receber_imagem(self, imagem: bytes | Path) -> None:
+        if not self._ocupado:
+            self.imagem_recebida.emit(imagem)
+
+    def dragEnterEvent(self, evento) -> None:  # noqa: N802 - nome definido pelo Qt.
+        if not self._ocupado and imagem_do_mime(evento.mimeData()) is not None:
+            evento.acceptProposedAction()
+
+    def dropEvent(self, evento) -> None:  # noqa: N802 - nome definido pelo Qt.
+        imagem = imagem_do_mime(evento.mimeData())
+        if imagem is not None:
+            evento.acceptProposedAction()
+            self._receber_imagem(imagem)
+
+    def adicionar(self, papel: str, texto: str, imagem: Path | None = None) -> None:
         self.vazio.hide()
-        bolha = Bolha(papel, texto)
+        bolha = Bolha(papel, texto, imagem)
         linha = QHBoxLayout()
         linha.setContentsMargins(0, 0, 0, 0)
         if papel == "usuario":
@@ -200,6 +261,7 @@ class PainelChat(QWidget):
     def definir_ocupado(self, ocupado: bool) -> None:
         self._ocupado = ocupado
         self.botao_enviar.setEnabled(not ocupado)
+        self.botao_imagem.setEnabled(not ocupado)
         self.linha_etapa.setVisible(ocupado)
         self.botao_cancelar.setEnabled(True)
         if ocupado:

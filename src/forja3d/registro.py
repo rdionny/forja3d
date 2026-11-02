@@ -10,25 +10,35 @@ from forja3d.configuracao import pasta_usuario
 class FiltroChave(logging.Filter):
     """Troca a chave por um marcador, mesmo que ela apareça em uma mensagem de biblioteca."""
 
-    def __init__(self, chave: str) -> None:
+    def __init__(self, *chaves: str) -> None:
         super().__init__()
-        self._chave = chave
+        self._chaves = [c for c in chaves if c]
 
     def filter(self, registro: logging.LogRecord) -> bool:
-        if self._chave:
+        if self._chaves:
             mensagem = registro.getMessage()
-            if self._chave in mensagem:
-                registro.msg = mensagem.replace(self._chave, "***")
+            limpa = mensagem
+            for chave in self._chaves:
+                limpa = limpa.replace(chave, "***")
+            if limpa != mensagem:
+                registro.msg = limpa
                 registro.args = ()
         return True
 
 
-def configurar_logs(chave: str) -> None:
+def proteger_chaves(*chaves: str) -> None:
+    """Chaves novas, de um provedor adicionado com o app aberto, também saem dos logs."""
+    for manipulador in logging.getLogger().handlers:
+        if isinstance(manipulador, RotatingFileHandler):
+            manipulador.addFilter(FiltroChave(*chaves))
+
+
+def configurar_logs(*chaves: str) -> None:
     pasta = pasta_usuario() / "logs"
     pasta.mkdir(parents=True, exist_ok=True)
     arquivo = RotatingFileHandler(pasta / "forja3d.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8")
     arquivo.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    arquivo.addFilter(FiltroChave(chave))
+    arquivo.addFilter(FiltroChave(*chaves))
     raiz = logging.getLogger()
     raiz.setLevel(logging.INFO)
     raiz.handlers = [arquivo]
