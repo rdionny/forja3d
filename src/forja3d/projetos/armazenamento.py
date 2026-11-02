@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from forja3d.layout_mesa import LayoutMesa
+
 ESTADO_INICIAL: dict[str, Any] = {"titulo": "Nova peça", "versao_atual": None, "versao_aprovada": None}
 _VERSAO = re.compile(r"^v\d{3,}$")
 
@@ -86,6 +88,9 @@ class Projeto:
         gravar_json(pasta_execucao / "medidas.json", partes)
         gravar_json(pasta_execucao / "especificacao.json", especificacao)
         gravar_json(pasta_execucao / "info.json", {"resumo": resumo, "criado_em": datetime.now().isoformat(timespec="seconds")})
+        # A mesa acompanha a peça: um ajuste do agente não desfaz o que o usuário posicionou.
+        if existentes and (self.pasta / existentes[-1] / "layout.json").exists():
+            shutil.copyfile(self.pasta / existentes[-1] / "layout.json", pasta_execucao / "layout.json")
         pasta_execucao.replace(self.pasta / versao)
         return versao
 
@@ -94,6 +99,22 @@ class Projeto:
 
     def stls(self, versao: str) -> list[Path]:
         return [self.pasta_versao(versao) / p["stl"] for p in self.medidas(versao)]
+
+    def stls_por_parte(self, versao: str) -> dict[str, Path]:
+        return {p["nome"]: self.pasta_versao(versao) / p["stl"] for p in self.medidas(versao)}
+
+    def tem_layout(self, versao: str) -> bool:
+        return (self.pasta_versao(versao) / "layout.json").exists()
+
+    def layout(self, versao: str, perfil: dict[str, Any]) -> LayoutMesa:
+        tamanhos = {p["nome"]: (float(p["tamanho"][0]), float(p["tamanho"][1])) for p in self.medidas(versao)}
+        dados = ler_json(self.pasta_versao(versao) / "layout.json")
+        if dados is None:
+            return LayoutMesa.novo(tamanhos, perfil)
+        return LayoutMesa.de_dados(dados, tamanhos, perfil)
+
+    def salvar_layout(self, versao: str, layout: LayoutMesa) -> None:
+        gravar_json(self.pasta_versao(versao) / "layout.json", layout.para_dados())
 
     def verificacao(self, versao: str) -> dict[str, Any] | None:
         return ler_json(self.pasta_versao(versao) / "verificacao.json")

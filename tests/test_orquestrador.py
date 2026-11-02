@@ -221,6 +221,25 @@ def test_nova_versao_invalida_a_aprovacao(config, perfil):
     a.processar("Ajusta")
     assert a.versao_atual == "v002"
     assert a.versao_aprovada is None
+    # O modelo apresentou a v002 sem verificar: quem verificou foi o código.
+    assert a.projeto.verificacao("v002")["aprovado"]
+
+
+@pytest.mark.cad
+def test_versao_reprovada_sem_verificar_volta_para_o_modelo(config, perfil):
+    errado = (DADOS / "suporte_l_modelo_errado.py").read_text(encoding="utf-8")
+    a, _ = agente(
+        config,
+        perfil,
+        [
+            chamada("definir_especificacao", ESPEC, "c1"),
+            chamada("executar_cad", {"codigo": errado, "resumo_alteracao": ""}, "c2"),
+            texto("Pronto, a peça ficou perfeita."),
+            texto("A verificação reprovou esta versão."),
+        ],
+    )
+    a.processar("Suporte")
+    assert any("[Sistema] A verificação da versão v001 reprovou" in str(m.get("content")) for m in a.mensagens)
     assert not a.pode_aprovar()
 
 

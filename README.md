@@ -22,9 +22,20 @@ Copie `config/ia_padrao.example.toml` para `config/ia_padrao.toml` e preencha a 
 3. Escolha material, qualidade, paredes e preenchimento, e clique em **Aprovar e preparar**.
 4. Clique em **Exportar G-code** e salve no **cartão SD**. A impressora não lê pen drive.
 
-Também dá para começar por uma imagem: clique em **Imagem de referência**, ou arraste e cole a imagem no chat. O app mostra pelo menos 2 opções de conceito, cada uma com a peça montada e a vista explodida. Depois da escolha, o agente pergunta o que faltar e modela a peça. As imagens são só ilustração e não têm medidas reais.
+### Na mesa
 
-No visualizador, arraste para girar, use a roda para aproximar e Shift + arrastar para mover.
+- **Mover:** clique em um item e arraste. A vista **Topo** é a melhor para posicionar. O que está na mesa é o que vai imprimir.
+- **Câmera:** arraste o espaço vazio para girar, use a roda para aproximar e Shift + arrastar para mover a vista.
+- **Copiar e cia.:** com o item selecionado, use os botões ou Ctrl+C, Ctrl+V, Ctrl+D (duplicar), R (girar 90°), Delete e Ctrl+Z. O botão direito abre o mesmo menu. Deletar tira só da mesa: o modelo continua igual, e o botão **Mesa** adiciona a parte de novo.
+- **Arquivos diferentes:** em **Mesa > Mover para o arquivo**, separe os itens para imprimir em outro momento. Cada arquivo vira um G-code. O que não couber em um arquivo vai sozinho para outro.
+- **Pedir um ajuste em uma parte:** selecione o item e clique em **Enviar à IA**. A próxima mensagem do chat vai falar só daquela parte, e o agente recebe as vistas dela.
+- **Tempo:** depois de preparar, o app mostra quanto a impressão demora e a que horas fica pronta se começar agora. É a estimativa do OrcaSlicer, que não conta aquecimento nem nivelamento.
+
+Mudar a mesa invalida o G-code preparado: é preciso clicar em **Aprovar e preparar** de novo.
+
+### A partir de uma imagem
+
+Também dá para começar por uma imagem: clique em **Imagem de referência**, ou arraste e cole a imagem no chat. O app mostra pelo menos 2 opções de conceito, cada uma com a peça montada e a vista explodida. Depois da escolha, o agente pergunta o que faltar e modela a peça. As imagens são só ilustração e não têm medidas reais.
 
 ## O que protege a peça e a impressora
 

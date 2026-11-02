@@ -17,8 +17,8 @@ from forja3d.agente.especificacao import Especificacao, problemas_de_tamanho
 from forja3d.cad.executor import executar_script
 from forja3d.conceitos.fluxo import mensagem_do_conceito
 from forja3d.configuracao import Configuracao
-from forja3d.fatiamento.orca import ErroFatiamento, ParametrosFatiamento, fatiar
-from forja3d.ia.cliente import Cancelado, ChamadaFerramenta, ClienteIA
+from forja3d.fatiamento.orca import ErroFatiamento, ParametrosFatiamento, fatiar_layout
+from forja3d.ia.cliente import Cancelado, ChamadaFerramenta, ClienteIA, ErroIA
 from forja3d.projetos.armazenamento import Projeto
 from forja3d.render.vistas import renderizar
 from forja3d.verificacao.verificador import verificar_peca
@@ -106,6 +106,7 @@ class Orquestrador:
         self._falhas: Counter[str] = Counter()
         self._forcar_texto: str | None = None
         self._proxima = "especificacao"
+        self._versao_sem_verificar = False
 
         sistema = {"role": "system", "content": PROMPT_SISTEMA.replace("{{CALIBRACAO_USUARIO}}", calibracao)}
         self.mensagens: list[dict[str, Any]] = [sistema, *projeto.ler_historico()[1:]]
@@ -165,10 +166,44 @@ class Orquestrador:
         self.mensagens = _sem_imagens(self.mensagens)
         return self._atender(mensagem_do_conceito(conceito))
 
-    def _atender(self, texto: str) -> str:
+    def processar_parte(self, texto: str, parte: str) -> str:
+        """Atende a um pedido sobre uma parte que o usuário selecionou na mesa."""
+        self.projeto.registrar_conversa("usuario", f"Sobre a parte {parte}: {texto}")
+        medidas = self.projeto.medidas(self.versao_atual) if self.versao_atual else []
+        dados = next((p for p in medidas if p["nome"] == parte), None)
+        if dados is None:
+            return self._atender(texto)
+        x, y, z = dados["tamanho"]
+        outras = ", ".join(p["nome"] for p in medidas if p["nome"] != parte) or "nenhuma"
+        mensagem = (
+            "[PARTE SELECIONADA]\n"
+            f"Parte: {parte}\n"
+            f"Tamanho: {x:g} x {y:g} x {z:g} mm\n"
+            f"Furos: {len(dados['furos'])}\n"
+            f"Outras partes, que devem continuar iguais: {outras}\n"
+            f"Versão atual: {self.versao_atual}\n"
+            f"Pedido: {texto}"
+        )
+        self.mensagens = _sem_imagens(self.mensagens)
+        return self._atender(mensagem, self._vistas_da_parte(dados))
+
+    def _vistas_da_parte(self, dados: dict[str, Any]) -> list[Path]:
+        self.ouvinte.etapa("Gerando as vistas da parte selecionada")
+        pasta_versao = self.projeto.pasta_versao(self.versao_atual)
+        try:
+            return renderizar([pasta_versao / dados["stl"]], pasta_versao / "renders_partes" / dados["nome"], cancelar=self._cancelar)
+        except RuntimeError as erro:
+            log.warning("Falha ao renderizar a parte: %s", erro)
+            return []
+
+    def _atender(self, texto: str, vistas: list[Path] | None = None) -> str:
         self._falhas.clear()
         self._forcar_texto = None
+        tamanho_antes = len(self.mensagens)
         self.mensagens.append({"role": "user", "content": texto})
+        if vistas:
+            legenda = {"type": "text", "text": "[Sistema] Vistas da parte selecionada: " + ", ".join(v.stem for v in vistas) + "."}
+            self.mensagens.append({"role": "user", "content": [legenda, *(_parte_imagem(v) for v in vistas)]})
         self._anexar_conceito_se_faltar()
         self._proxima = "modelagem" if self.especificacao else "especificacao"
         try:
@@ -176,6 +211,12 @@ class Orquestrador:
         except Cancelado:
             self.mensagens.append({"role": "user", "content": "[Sistema] O usuário cancelou a operação anterior."})
             resposta = "Operação cancelada. Nada foi alterado além das versões já salvas."
+        except ErroIA as erro:
+            # Se a IA não chegou a responder, reenviar não pode deixar o mesmo pedido repetido no histórico.
+            if not any(m.get("role") == "assistant" for m in self.mensagens[tamanho_antes:]):
+                del self.mensagens[tamanho_antes:]
+            self.projeto.registrar_conversa("erro", str(erro))
+            raise
         finally:
             self.projeto.limpar_execucoes()
             self._salvar_historico()
@@ -194,6 +235,18 @@ class Orquestrador:
             if not resposta.chamadas:
                 if resposta.conteudo.strip():
                     self.mensagens.append(resposta.mensagem)
+                    # O modelo pode apresentar a peça sem verificar. Quem garante a verificação é o código.
+                    if self._versao_sem_verificar and self.versao_atual and self.especificacao:
+                        verificacao, _ = self._verificar({})
+                        if verificacao["bloqueios"]:
+                            motivos = "; ".join(i["mensagem"] for i in verificacao["bloqueios"])
+                            self.mensagens.append(
+                                {
+                                    "role": "user",
+                                    "content": f"[Sistema] A verificação da versão {self.versao_atual} reprovou a peça: {motivos}. Corrija antes de apresentar ao usuário.",
+                                }
+                            )
+                            continue
                     return resposta.conteudo
                 if pedido_de_texto:
                     return "A IA não devolveu nenhum texto. Tente reformular o pedido."
@@ -312,6 +365,7 @@ class Orquestrador:
         self.versao_atual = versao
         self.versao_aprovada = None
         self.resultado_verificacao = None
+        self._versao_sem_verificar = True
         self._salvar_estado()
         self.ouvinte.versao(versao)
         self._proxima = "conversa"
@@ -331,6 +385,7 @@ class Orquestrador:
         pasta = self.projeto.pasta_versao(self.versao_atual)
         resultado = verificar_peca(self.projeto.medidas(self.versao_atual), self.especificacao, self.perfil, pasta)
         self.resultado_verificacao = resultado
+        self._versao_sem_verificar = False
         self.projeto.salvar_verificacao(self.versao_atual, resultado)
         self.ouvinte.verificacao(self.versao_atual, resultado)
         if resultado["bloqueios"]:
@@ -374,16 +429,14 @@ class Orquestrador:
         if not versao or self.versao_aprovada != versao or not self.pode_aprovar():
             raise ErroFatiamento("Esta versão precisa estar aprovada, sem bloqueios, antes de fatiar.")
         self.ouvinte.etapa("Fatiando")
-        partes = self.projeto.medidas(versao)
-        tamanho = tuple(partes[0]["tamanho"][:2]) if len(partes) == 1 else None
-        resumo = fatiar(
-            self.projeto.stls(versao),
+        resumo = fatiar_layout(
+            self.projeto.layout(versao, self.perfil),
+            self.projeto.stls_por_parte(versao),
             parametros,
             self.perfil,
             self.projeto.pasta_impressao(versao, parametros.material, parametros.qualidade),
             self.config.caminho_orca,
             self._cancelar,
-            tamanho,
         )
         self.ouvinte.fatiamento(versao, resumo)
         validacao = resumo["validacao"]

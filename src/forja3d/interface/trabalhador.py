@@ -69,6 +69,10 @@ class Trabalhador(QObject):
     def processar_conceito(self, conceito: dict[str, Any]) -> None:
         self._atender(lambda: self.orquestrador.processar_conceito(conceito))
 
+    @Slot(str, str)
+    def processar_parte(self, texto: str, parte: str) -> None:
+        self._atender(lambda: self.orquestrador.processar_parte(texto, parte))
+
     def _atender(self, pedido: Callable[[], str]) -> None:
         try:
             self.resposta.emit(pedido())

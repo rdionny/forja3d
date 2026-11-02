@@ -33,6 +33,13 @@ QLabel#medida {{ color: {TEXTO}; font-weight: 600; }}
 QLabel#etapa {{ color: {ACENTO_FORTE}; font-weight: 600; }}
 QLabel#aviso {{ color: {ALERTA}; }}
 QLabel#erro {{ color: {ERRO}; }}
+QLabel#tempo {{ color: {ACENTO_FORTE}; font-weight: 600; }}
+QFrame#chipReferencia {{ background: {BOLHA_USUARIO}; border: 1px solid {ACENTO}; border-radius: 6px; }}
+QMenu {{ background: {ELEVADO}; border: 1px solid {BORDA}; padding: 4px; }}
+QMenu::item {{ padding: 5px 22px 5px 12px; border-radius: 4px; }}
+QMenu::item:selected {{ background: {ACENTO}; color: #14161a; }}
+QMenu::item:disabled {{ color: #636a78; }}
+QMenu::separator {{ height: 1px; background: {BORDA}; margin: 4px 6px; }}
 QLabel#tituloConceito {{ font-size: 14px; font-weight: 600; }}
 QLabel#imagemConceito {{ background: {FUNDO_3D}; border: 1px solid {BORDA}; border-radius: 6px; color: {SUAVE}; }}
 QFrame#cartaoConceito {{ background: {ELEVADO}; border: 1px solid {BORDA}; border-radius: 8px; }}

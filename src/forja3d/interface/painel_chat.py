@@ -107,6 +107,7 @@ class PainelChat(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent, objectName="painel")
         self.setAcceptDrops(True)
+        self.referencia: str | None = None
         self._ocupado = False
         self._seguindo_o_fim = False
         self._inicio_etapa = 0.0
@@ -149,6 +150,18 @@ class PainelChat(QWidget):
         self.botao_imagem.clicked.connect(self.imagem_pedida)
         linha_imagem = QHBoxLayout()
         linha_imagem.addWidget(self.botao_imagem)
+        self.chip_referencia = QFrame(objectName="chipReferencia")
+        linha_chip = QHBoxLayout(self.chip_referencia)
+        linha_chip.setContentsMargins(8, 2, 2, 2)
+        linha_chip.setSpacing(4)
+        self.rotulo_referencia = QLabel("")
+        self.rotulo_referencia.setTextFormat(Qt.TextFormat.PlainText)
+        botao_tirar = QPushButton("✕", objectName="plano", toolTip="Não usar esta parte como referência")
+        botao_tirar.clicked.connect(self.limpar_referencia)
+        linha_chip.addWidget(self.rotulo_referencia)
+        linha_chip.addWidget(botao_tirar)
+        self.chip_referencia.hide()
+        linha_imagem.addWidget(self.chip_referencia)
         linha_imagem.addStretch(1)
         layout.addLayout(linha_imagem)
 
@@ -189,6 +202,17 @@ class PainelChat(QWidget):
         if texto and not self._ocupado:
             self.campo.clear()
             self.enviado.emit(texto)
+
+    def definir_referencia(self, parte: str) -> None:
+        """A próxima mensagem vai falar desta parte."""
+        self.referencia = parte
+        self.rotulo_referencia.setText(f"Sobre a parte: {parte}")
+        self.chip_referencia.show()
+        self.campo.setFocus()
+
+    def limpar_referencia(self) -> None:
+        self.referencia = None
+        self.chip_referencia.hide()
 
     def _receber_imagem(self, imagem: bytes | Path) -> None:
         if not self._ocupado:

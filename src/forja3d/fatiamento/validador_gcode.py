@@ -33,6 +33,7 @@ def validar_gcode(
     camada_inicial_mm: float = 0.2,
     tamanho_peca_xy: tuple[float, float] | None = None,
     brim_mm: float = 0.0,
+    area_esperada: tuple[float, float, float, float] | None = None,
 ) -> dict[str, Any]:
     limites = perfil["validacao_gcode"]
     dados_material = perfil["materiais"][material]
@@ -180,6 +181,17 @@ def validar_gcode(
             metade = tamanho_peca_xy[indice] / 2 + brim_mm + 1.0
             if extrusao[eixo][0] < centro - metade or extrusao[eixo][1] > centro + metade:
                 registrar("AREA_DIVERGENTE", ALERTA, f"A área impressa em {eixo} ({extrusao[eixo][0]:g} a {extrusao[eixo][1]:g} mm) difere da posição esperada da peça.")
+    if area_esperada and z_primeira is not None:
+        # O que o usuário posicionou na mesa precisa ser o que vai imprimir.
+        x0, x1, y0, y1 = area_esperada
+        tolerancia = brim_mm + 1.0
+        if extrusao["X"][0] < x0 - tolerancia or extrusao["X"][1] > x1 + tolerancia or extrusao["Y"][0] < y0 - tolerancia or extrusao["Y"][1] > y1 + tolerancia:
+            registrar(
+                "POSICAO_DIVERGENTE",
+                BLOQUEIO,
+                f"A área impressa (X {extrusao['X'][0]:g} a {extrusao['X'][1]:g}, Y {extrusao['Y'][0]:g} a {extrusao['Y'][1]:g} mm) "
+                f"não é a da mesa (X {x0:g} a {x1:g}, Y {y0:g} a {y1:g} mm).",
+            )
     if excesso_velocidade:
         registrar("VELOCIDADE_ACIMA", INFO, "Há valores de F acima do limite da máquina. O firmware limita o movimento.")
 
