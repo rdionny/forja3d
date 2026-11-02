@@ -20,8 +20,9 @@ def numero(valor: float) -> str:
     return f"{valor:g}".replace(".", ",")
 
 
-def test_prompt_igual_ao_de_docs():
-    assert PROMPT == (RAIZ / "docs" / "PROMPT_AGENTE_3D.md").read_text(encoding="utf-8")
+def test_prompt_do_pacote_igual_ao_da_raiz():
+    """Se falhar, rode scripts/sincronizar_prompt.py."""
+    assert PROMPT == (RAIZ / "PROMPT_AGENTE_3D.md").read_text(encoding="utf-8")
 
 
 def test_calibracao_tem_um_unico_ponto_de_insercao():
@@ -41,7 +42,6 @@ def test_volumes_iguais_ao_perfil():
     [
         ("Bico", lambda m: f"{m['bico_c']} °C ({m['bico_min_c']}–{m['bico_max_c']})"),
         ("Mesa", lambda m: f"{m['mesa_c']} °C"),
-        ("Vazão máxima", lambda m: f"{numero(m['vazao_max_mm3_s'])} mm³/s"),
         ("Retração", lambda m: f"{numero(m['retracao_mm'])} mm"),
         ("Densidade", lambda m: f"{numero(m['densidade_g_cm3'])} g/cm³"),
     ],

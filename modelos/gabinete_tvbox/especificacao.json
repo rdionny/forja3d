@@ -1,0 +1,29 @@
+{
+  "nome": "mini_gabinete_tv_box",
+  "finalidade": "Gabinete para placa de TV Box, com cooler de fonte ATX de 120 mm",
+  "material": "PETG",
+  "carga": "leve",
+  "ambiente": "Interno, com calor da placa em funcionamento",
+  "dimensoes": { "x_mm": 134, "y_mm": 134, "z_mm": 39.6, "tolerancia_mm": 0.2 },
+  "pecas": 6,
+  "furos": [
+    { "quantidade": 8, "diametro_nominal_mm": 3, "diametro_modelado_mm": 2.7, "eixo": "Z", "passante": false, "uso": "Autoatarraxante M3: 4 nos espaçadores da placa e 4 nas colunas" },
+    { "quantidade": 4, "diametro_nominal_mm": 3, "diametro_modelado_mm": 3.4, "eixo": "Z", "passante": true, "uso": "Folga M3 na tampa" },
+    { "quantidade": 4, "diametro_nominal_mm": 4, "diametro_modelado_mm": 4.5, "eixo": "Z", "passante": true, "uso": "Folga M4 para o cooler" },
+    { "quantidade": 1, "diametro_nominal_mm": 8, "diametro_modelado_mm": 8, "eixo": "Z", "passante": true, "uso": "Passagem de cabos" }
+  ],
+  "caracteristicas": [
+    "Base com piso, 4 colunas e 4 espaçadores para a placa",
+    "Painéis encaixados em canais, com folga deslizante",
+    "Tampa com grade e furos para cooler de 120 mm",
+    "Frente com janela larga para os conectores",
+    "Laterais e traseira com fendas de ventilação"
+  ],
+  "orientacao_impressao": "Todas as peças deitadas, com a face externa na mesa. Nenhuma precisa de suporte.",
+  "premissas": [
+    "Placa de 100 x 100 mm, com furos a 3,5 mm dos cantos: PROVISÓRIO, medir",
+    "Componente mais alto: 22 mm acima da placa: PROVISÓRIO, medir",
+    "Cooler de 120 x 120 x 25 mm com furos a 105 mm, por fora da tampa",
+    "PETG por causa do calor da placa"
+  ]
+}

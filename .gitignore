@@ -1,24 +1,31 @@
-# As barras no início prendem a regra à raiz. Sem elas, /projetos/ também
+# As barras no início prendem a regra à raiz. Sem elas, projetos/ também
 # ignoraria o código em src/forja3d/projetos/.
 
-# Ambiente e ferramentas
+# Python
 /.venv/
-/ferramentas/
-
-# Segredos e dados locais
-/config/ia.json
-/config/calibracao.json
-/docs/PROMPT_DESENVOLVIMENTO.md
-
-# Gerados pelo app
-/saida/
-/projetos/
-/logs/
-
-# Cache e empacotamento
 __pycache__/
+*.pyc
 .pytest_cache/
 .ruff_cache/
 /build/
 /dist/
+*.spec
 *.egg-info/
+
+# Chave da API: nunca versionar
+/config/ia_padrao.toml
+
+# Estes documentos citam a chave da API em texto aberto.
+# Só remova daqui depois de tirar a chave deles.
+/PLANEJAMENTO.md
+/PROMPT_DESENVOLVIMENTO.md
+
+# Peças do usuário e saídas de teste
+/projetos/
+/saida/
+
+# Programas externos baixados
+/ferramentas/
+
+# Logs
+*.log

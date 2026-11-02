@@ -1,0 +1,18 @@
+[ia]
+endpoint = "http://129.151.36.250:8317/v1"
+api_key = ""
+modelo = "gemini-3.8-flash-high"
+timeout_s = 240
+max_tentativas_rede = 2
+temperatura = 0.2
+
+[ia.esforco]
+conversa = "low"
+especificacao = "low"
+modelagem = "high"
+reparo = "high"
+critica_visual = "low"
+
+[agente]
+max_chamadas_por_pedido = 25
+max_reparos_mesmo_erro = 3

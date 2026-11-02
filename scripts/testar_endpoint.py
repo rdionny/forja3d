@@ -1,4 +1,4 @@
-"""Testa o endpoint de IA configurado em config/ia.json e relata o resultado de cada item."""
+"""Testa o endpoint de IA configurado em config/ia_padrao.toml e relata o resultado de cada item."""
 
 import argparse
 import base64
@@ -6,12 +6,14 @@ import io
 import json
 import sys
 import time
+import tomllib
 from pathlib import Path
 
 from openai import OpenAI
 from PIL import Image, ImageDraw
 
-CONFIG_PADRAO = Path(__file__).resolve().parent.parent / "config" / "ia.json"
+CONFIG_PADRAO = Path(__file__).resolve().parent.parent / "config" / "ia_padrao.toml"
+MODELO_IMAGEM_PADRAO = "gemini-3.1-flash-image"
 
 FERRAMENTA_CUBO = {
     "type": "function",
@@ -175,6 +177,19 @@ ITENS = [
 ]
 
 
+def ler_config(caminho: Path) -> dict:
+    ia = tomllib.loads(caminho.read_text(encoding="utf-8"))["ia"]
+    return {
+        "base_url": ia["endpoint"],
+        "api_key": ia["api_key"],
+        "modelo": ia["modelo"],
+        "modelo_imagem": ia.get("modelo_imagem", MODELO_IMAGEM_PADRAO),
+        "temperatura": ia.get("temperatura", 0.2),
+        "max_tokens": ia.get("max_tokens", 16000),
+        "tempo_limite_s": ia.get("timeout_s", 240),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     argumentos = argparse.ArgumentParser(description=__doc__)
@@ -183,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
     if not caminho.is_file():
         print(f"Arquivo não encontrado: {caminho}")
         return 1
-    config = json.loads(caminho.read_text(encoding="utf-8"))
+    config = ler_config(caminho)
     chave = config["api_key"]
     cliente = OpenAI(base_url=config["base_url"], api_key=chave, timeout=config["tempo_limite_s"], max_retries=0)
 
@@ -196,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
             detalhe = teste(cliente, config)
             situacao = " OK  "
             aprovados += 1
-        except Exception as erro:
+        except Exception as erro:  # noqa: BLE001 - um item com falha não pode impedir os seguintes.
             detalhe = f"{type(erro).__name__}: {erro}".replace(chave, mascarar(chave))[:300]
             situacao = "FALHA"
         print(f"[{situacao}] {nome} ({time.monotonic() - inicio:.1f} s): {detalhe}")

@@ -8,6 +8,7 @@ import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 from PIL import Image
@@ -43,7 +44,7 @@ def chamada_de_cubo(lado: int) -> dict:
 
 
 class Servidor(BaseHTTPRequestHandler):
-    comportamento: dict = {}
+    comportamento: ClassVar[dict] = {}
 
     def log_message(self, *_):
         pass
@@ -110,23 +111,29 @@ def rodar(tmp_path, capsys):
             threading.Thread(target=servidor.serve_forever, daemon=True).start()
             servidores.append(servidor)
             url = f"http://127.0.0.1:{servidor.server_port}/v1"
-        config = {
-            "base_url": url,
-            "api_key": CHAVE,
-            "modelo": MODELO,
-            "modelo_imagem": MODELO_IMAGEM,
-            "temperatura": 0.2,
-            "max_tokens": 1000,
-            "tempo_limite_s": 1,
-        }
-        caminho = tmp_path / "ia.json"
-        caminho.write_text(json.dumps(config), encoding="utf-8")
+        caminho = tmp_path / "ia.toml"
+        caminho.write_text(
+            f"""[ia]
+endpoint = "{url}"
+api_key = "{CHAVE}"
+modelo = "{MODELO}"
+modelo_imagem = "{MODELO_IMAGEM}"
+timeout_s = 1
+""",
+            encoding="utf-8",
+        )
         codigo = testar_endpoint.main(["--config", str(caminho)])
         return codigo, capsys.readouterr().out
 
     yield _rodar
     for servidor in servidores:
         servidor.shutdown()
+
+
+def test_modelo_de_imagem_tem_padrao(tmp_path):
+    caminho = tmp_path / "ia.toml"
+    caminho.write_text('[ia]\nendpoint = "http://x/v1"\napi_key = "k"\nmodelo = "m"\n', encoding="utf-8")
+    assert testar_endpoint.ler_config(caminho)["modelo_imagem"] == testar_endpoint.MODELO_IMAGEM_PADRAO
 
 
 def test_todos_os_itens_aprovados(rodar):
