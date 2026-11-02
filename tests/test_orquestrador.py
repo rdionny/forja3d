@@ -7,8 +7,8 @@ import pytest
 from forja3d.agente.orquestrador import DEFINICOES, Orquestrador
 from forja3d.configuracao import ConfigIA, Configuracao
 from forja3d.fatiamento.orca import ErroFatiamento, ParametrosFatiamento
-from forja3d.ia.cliente import Cancelado, ChamadaFerramenta, RespostaIA
-from forja3d.projetos.armazenamento import Projeto
+from forja3d.ia.cliente import Cancelado, ChamadaFerramenta, ErroIA, RespostaIA
+from forja3d.projetos.armazenamento import Projeto, gravar_json
 
 DADOS = Path(__file__).parent / "dados"
 ESPEC = {
@@ -241,6 +241,231 @@ def test_versao_reprovada_sem_verificar_volta_para_o_modelo(config, perfil):
     a.processar("Suporte")
     assert any("[Sistema] A verificação da versão v001 reprovou" in str(m.get("content")) for m in a.mensagens)
     assert not a.pode_aprovar()
+
+
+def pedidos_no_historico(a):
+    return [m["content"] for m in a.mensagens if m["role"] == "user"]
+
+
+def test_voltar_ao_pedido_corta_o_historico_e_a_conversa(config, perfil):
+    a, _ = agente(config, perfil, [texto("r1"), texto("r2"), texto("r3")])
+    a.processar("p1")
+    a.processar("p2")
+    a.processar("p3")
+    pedido = a.voltar_ao_pedido(1)
+    assert pedido["texto"] == "p2"
+    assert pedidos_no_historico(a) == ["p1"]
+    assert a.mensagens[-1]["content"] == "r1", "o histórico termina na resposta anterior"
+    assert [r["texto"] for r in a.projeto.ler_conversa()] == ["p1", "r1"]
+    assert pedidos_no_historico(Orquestrador(config, perfil, ClienteGravado([]), Projeto(a.projeto.pasta))) == ["p1"], "vale depois de reabrir"
+
+
+def test_voltar_ao_primeiro_pedido_deixa_so_o_sistema(config, perfil):
+    a, _ = agente(config, perfil, [texto("r1")])
+    a.processar("p1")
+    a.voltar_ao_pedido(0)
+    assert [m["role"] for m in a.mensagens] == ["system"]
+    assert a.projeto.ler_conversa() == []
+
+
+def test_voltar_guarda_uma_copia_da_conversa(config, perfil):
+    a, _ = agente(config, perfil, [texto("r1")])
+    a.processar("p1")
+    a.voltar_ao_pedido(0)
+    copia = a.projeto.pasta / "conversas_anteriores" / "001"
+    assert "p1" in (copia / "conversa.jsonl").read_text(encoding="utf-8")
+    assert "p1" in (copia / "historico.json").read_text(encoding="utf-8")
+
+
+def test_pedido_repetido_volta_ao_certo(config, perfil):
+    a, _ = agente(config, perfil, [texto("r1"), texto("r2"), texto("r3")])
+    for _vez in range(3):
+        a.processar("igual")
+    a.voltar_ao_pedido(1)
+    assert pedidos_no_historico(a) == ["igual"]
+    assert len(a.projeto.pedidos()) == 1
+
+
+def test_pedido_que_deu_erro_pode_ser_reenviado(config, perfil):
+    class ClienteQueFalha(ClienteGravado):
+        def conversar(self, mensagens, ferramentas, etapa, cancelar=None):
+            if not self.respostas:
+                raise ErroIA("sem resposta")
+            return super().conversar(mensagens, ferramentas, etapa, cancelar)
+
+    a = Orquestrador(config, perfil, ClienteQueFalha([texto("r1")]), Projeto.criar(config.pasta_projetos))
+    a.processar("p1")
+    with pytest.raises(ErroIA):
+        a.processar("p2")
+    assert [r["papel"] for r in a.projeto.ler_conversa()] == ["usuario", "agente", "usuario", "erro"]
+    a.voltar_ao_pedido(1)
+    assert pedidos_no_historico(a) == ["p1"]
+    assert [r["texto"] for r in a.projeto.ler_conversa()] == ["p1", "r1"]
+
+
+def test_conversa_antiga_sem_marco_acha_o_pedido_pelo_texto(config, perfil):
+    projeto = Projeto.criar(config.pasta_projetos)
+    registros = [
+        {"papel": "usuario", "texto": "igual", "em": "2026-01-01T10:00:00"},
+        {"papel": "agente", "texto": "r1", "em": "2026-01-01T10:00:01"},
+        {"papel": "usuario", "texto": "igual", "em": "2026-01-01T10:01:00"},
+        {"papel": "agente", "texto": "r2", "em": "2026-01-01T10:01:01"},
+        {"papel": "usuario", "texto": "outro", "em": "2026-01-01T10:02:00"},
+        {"papel": "agente", "texto": "r3", "em": "2026-01-01T10:02:01"},
+    ]
+    projeto.reescrever_conversa(registros)
+    projeto.salvar_historico(
+        [
+            {"role": "system", "content": "x"},
+            {"role": "user", "content": "igual"},
+            {"role": "assistant", "content": "r1"},
+            {"role": "user", "content": "igual"},
+            {"role": "assistant", "content": "r2"},
+            {"role": "user", "content": "outro"},
+            {"role": "assistant", "content": "r3"},
+        ]
+    )
+    a = Orquestrador(config, perfil, ClienteGravado([]), projeto)
+    a.voltar_ao_pedido(1)
+    assert [m["content"] for m in a.mensagens[1:]] == ["igual", "r1"]
+    assert [r["texto"] for r in projeto.ler_conversa()] == ["igual", "r1"]
+
+
+def test_conversa_antiga_acha_conceito_e_parte_no_formato_do_modelo(config, perfil):
+    projeto = Projeto.criar(config.pasta_projetos)
+    projeto.reescrever_conversa(
+        [
+            {"papel": "usuario", "texto": "Escolhi o conceito: Tampa modular.", "em": "2026-01-01T10:00:00", "imagem": "a.png"},
+            {"papel": "agente", "texto": "r1", "em": "2026-01-01T10:00:01"},
+            {"papel": "usuario", "texto": "Sobre a parte tampa: aumente", "em": "2026-01-01T10:01:00"},
+            {"papel": "agente", "texto": "r2", "em": "2026-01-01T10:01:01"},
+        ]
+    )
+    historico = [
+        {"role": "system", "content": "x"},
+        {"role": "user", "content": "[CONCEITO ESCOLHIDO]\nPedido: x\nOpção: Tampa modular: com encaixe"},
+        {"role": "assistant", "content": "r1"},
+        {"role": "user", "content": "[PARTE SELECIONADA]\nParte: tampa\nPedido: aumente"},
+        {"role": "user", "content": "[Sistema] Imagens anteriores, removidas do histórico."},
+        {"role": "assistant", "content": "r2"},
+    ]
+    projeto.salvar_historico(historico)
+    a = Orquestrador(config, perfil, ClienteGravado([]), projeto)
+    a.voltar_ao_pedido(1)
+    assert [m["content"] for m in a.mensagens[1:]] == [historico[1]["content"], "r1"]
+    a.voltar_ao_pedido(0)
+    assert [m["role"] for m in a.mensagens] == ["system"]
+
+
+def test_conversa_antiga_sem_achar_o_texto_nao_corta_o_historico(config, perfil):
+    projeto = Projeto.criar(config.pasta_projetos)
+    projeto.reescrever_conversa([{"papel": "usuario", "texto": "sumiu", "em": "2026-01-01T10:00:00"}])
+    projeto.salvar_historico([{"role": "system", "content": "x"}, {"role": "user", "content": "[Sistema] outra coisa"}])
+    a = Orquestrador(config, perfil, ClienteGravado([]), projeto)
+    a.voltar_ao_pedido(0)
+    assert len(a.mensagens) == 2
+    assert projeto.ler_conversa() == []
+
+
+def test_versao_em_acha_a_que_existia_naquele_momento(config):
+    projeto = Projeto.criar(config.pasta_projetos)
+    for versao, instante in (("v001", "2026-01-01T10:00:00"), ("v002", "2026-01-01T11:00:00")):
+        (projeto.pasta / versao).mkdir()
+        gravar_json(projeto.pasta / versao / "info.json", {"criado_em": instante})
+    assert projeto.versao_em("2026-01-01T09:00:00") is None
+    assert projeto.versao_em("2026-01-01T10:30:00") == "v001"
+    assert projeto.versao_em("2026-01-01T11:00:00") == "v002"
+
+
+@pytest.mark.cad
+def test_voltar_ao_pedido_devolve_a_peca_para_a_versao_daquele_momento(config, perfil):
+    certo = (DADOS / "suporte_l_corrigido.py").read_text(encoding="utf-8")
+    a, _ = agente(
+        config,
+        perfil,
+        [
+            chamada("definir_especificacao", ESPEC, "c1"),
+            chamada("executar_cad", {"codigo": certo, "resumo_alteracao": ""}, "c2"),
+            chamada("verificar_peca", {}, "c3"),
+            texto("v1 pronta"),
+            chamada("executar_cad", {"codigo": certo, "resumo_alteracao": "ajuste"}, "c4"),
+            chamada("verificar_peca", {}, "c5"),
+            texto("v2 pronta"),
+            chamada("executar_cad", {"codigo": certo, "resumo_alteracao": "de novo"}, "c6"),
+            chamada("verificar_peca", {}, "c7"),
+            texto("v3 pronta"),
+        ],
+    )
+    a.processar("Suporte")
+    a.aprovar()
+    a.processar("Ajusta")
+    a.aprovar()
+    a.voltar_ao_pedido(1)
+    assert a.versao_atual == "v001"
+    assert a.versao_aprovada is None, "a aprovação era de outra versão"
+    assert a.especificacao is not None and a.pode_aprovar()
+    assert a.projeto.versoes() == ["v001", "v002"], "a versão mais nova continua salva"
+    assert not any(m.get("tool_calls") and m["tool_calls"][0]["id"] == "c4" for m in a.mensagens)
+    reaberto = Projeto(a.projeto.pasta)
+    assert reaberto.estado["versao_atual"] == "v001"
+
+    a.processar("Ajusta outra vez")
+    assert a.versao_atual == "v003"
+
+
+@pytest.mark.cad
+def test_voltar_ao_comeco_tira_a_especificacao(config, perfil):
+    certo = (DADOS / "suporte_l_corrigido.py").read_text(encoding="utf-8")
+    a, _ = agente(
+        config,
+        perfil,
+        [
+            chamada("definir_especificacao", ESPEC, "c1"),
+            chamada("executar_cad", {"codigo": certo, "resumo_alteracao": ""}, "c2"),
+            chamada("verificar_peca", {}, "c3"),
+            texto("pronta"),
+        ],
+    )
+    a.processar("Suporte")
+    a.voltar_ao_pedido(0)
+    assert a.versao_atual is None and a.especificacao is None and not a.pode_aprovar()
+
+
+def test_mesma_versao_mantem_a_aprovacao_ao_voltar(config, perfil):
+    a, _ = agente(config, perfil, [texto("r1"), texto("r2")])
+    a.processar("p1")
+    a.processar("p2")
+    a.versao_aprovada = "v001"
+    a.versao_atual = "v001"
+    pedidos = a.projeto.ler_conversa()
+    a.projeto.reescrever_conversa([{**r, "versao": "v001"} if r["papel"] == "usuario" else r for r in pedidos])
+    (a.projeto.pasta / "v001").mkdir()
+    a.voltar_ao_pedido(1)
+    assert a.versao_aprovada == "v001"
+
+
+def test_versao_nova_herda_a_mesa_da_versao_atual_e_nao_a_ultima(config, perfil):
+    projeto = Projeto.criar(config.pasta_projetos)
+
+    def nova():
+        pasta = projeto.pasta_temporaria()
+        (pasta / "script.py").write_text("x", encoding="utf-8")
+        (pasta / "a.stl").write_bytes(b"")
+        medidas = [{"nome": "a", "stl": "a.stl", "tamanho": [10.0, 10.0, 10.0], "furos": [], "volume_mm3": 1.0, "solidos": 1, "valido": True}]
+        return projeto.registrar_versao(pasta, None, medidas, "")
+
+    v1 = nova()
+    mesa = projeto.layout(v1, perfil)
+    mesa.mover(mesa.itens[0].id, 30, 40)
+    projeto.salvar_layout(v1, mesa)
+    v2 = nova()
+    mesa2 = projeto.layout(v2, perfil)
+    mesa2.mover(mesa2.itens[0].id, 150, 160)
+    projeto.salvar_layout(v2, mesa2)
+
+    projeto.estado["versao_atual"] = v1
+    v3 = nova()
+    assert projeto.layout(v3, perfil).itens[0].x == 30
 
 
 @pytest.mark.cad

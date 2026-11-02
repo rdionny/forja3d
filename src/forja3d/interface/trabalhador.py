@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QObject, Signal, Slot
@@ -12,6 +13,7 @@ from forja3d.configuracao import Configuracao
 from forja3d.fatiamento.orca import ErroFatiamento, ParametrosFatiamento
 from forja3d.ia.cliente import Cancelado, ClienteIA, ErroIA
 from forja3d.projetos.armazenamento import Projeto
+from forja3d.projetos.compartilhar import ArquivoInvalido, importar_projeto, salvar_projeto
 
 log = logging.getLogger(__name__)
 
@@ -46,6 +48,9 @@ class Trabalhador(QObject):
     erro = Signal(str)
     concluido = Signal()
     fatiado = Signal(dict)
+    arquivo_salvo = Signal(object)
+    projeto_importado = Signal(object)
+    arquivo_falhou = Signal(str)
 
     def __init__(self, config: Configuracao, perfil: dict[str, Any], fabrica_cliente: Callable[..., Any] = ClienteIA) -> None:
         super().__init__()
@@ -72,6 +77,42 @@ class Trabalhador(QObject):
     @Slot(str, str)
     def processar_parte(self, texto: str, parte: str) -> None:
         self._atender(lambda: self.orquestrador.processar_parte(texto, parte))
+
+    @Slot()
+    def verificar(self) -> None:
+        try:
+            self.orquestrador.verificar_versao_atual()
+        except Exception:
+            log.exception("Falha ao verificar a versão")
+            self.erro.emit("Não consegui verificar esta versão. Ela não pode ser preparada até a verificação passar.")
+        finally:
+            self.concluido.emit()
+
+    @Slot(object, object)
+    def salvar_arquivo(self, projeto: Projeto, destino: Path) -> None:
+        try:
+            self.arquivo_salvo.emit(salvar_projeto(projeto, destino))
+        except OSError:
+            log.exception("Falha ao salvar o arquivo")
+            self.arquivo_falhou.emit(f"Não consegui salvar em:\n{destino}\n\nConfira se a pasta existe e se o arquivo não está aberto em outro programa.")
+        finally:
+            self.concluido.emit()
+
+    @Slot(object, object)
+    def importar_arquivo(self, arquivo: Path, pasta_projetos: Path) -> None:
+        projeto = None
+        try:
+            projeto = importar_projeto(arquivo, pasta_projetos, self.perfil)
+        except ArquivoInvalido as falha:
+            self.arquivo_falhou.emit(str(falha))
+        except OSError:
+            log.exception("Falha ao abrir o arquivo")
+            self.arquivo_falhou.emit(f"Não consegui abrir:\n{arquivo}")
+        finally:
+            self.concluido.emit()
+        # Depois do concluido: abrir a peça pode iniciar a verificação, e ela não pode ser dada como terminada.
+        if projeto is not None:
+            self.projeto_importado.emit(projeto)
 
     def _atender(self, pedido: Callable[[], str]) -> None:
         try:

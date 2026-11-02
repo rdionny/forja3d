@@ -4,12 +4,13 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QBuffer, QIODevice, QMimeData, Qt, QTimer, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QBuffer, QIODevice, QMimeData, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QGuiApplication, QKeySequence, QPixmap, QShortcut, QTextCursor
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLayoutItem,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -19,8 +20,12 @@ from PySide6.QtWidgets import (
 )
 
 from forja3d.conceitos.referencia import EXTENSOES
+from forja3d.interface import tema
+from forja3d.interface.leitura import LeitorEmVoz, texto_para_fala
 
 LARGURA_MINIATURA = 320
+ALTURA_DA_EDICAO = 96
+TEMPO_DO_AVISO_DE_COPIA_MS = 1500
 SUGESTOES = (
     "Suporte em L para parede, em PLA: base de 40 × 30 × 4 mm, parede de 30 mm de altura e 2 furos para parafuso M4 na base",
     "Caixa de 80 × 60 × 30 mm com tampa de encaixe, paredes de 2 mm, em PLA",
@@ -42,19 +47,132 @@ def imagem_do_mime(mime: QMimeData) -> bytes | Path | None:
 
 
 class Bolha(QFrame):
-    def __init__(self, papel: str, texto: str, imagem: Path | None = None) -> None:
+    """Uma mensagem, com a barra de ações embaixo. `numero_pedido` diz a qual pedido do usuário ela pertence."""
+
+    leitura_pedida = Signal(object)
+    edicao_pedida = Signal(object)
+    reenvio_pedido = Signal(object)
+    edicao_concluida = Signal(object, str)
+
+    def __init__(self, papel: str, texto: str, imagem: Path | None = None, numero_pedido: int = -1, editavel: bool = True) -> None:
         nomes = {"usuario": "bolhaUsuario", "agente": "bolhaAgente", "erro": "bolhaErro"}
         super().__init__(objectName=nomes[papel])
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 9, 12, 9)
+        self.papel = papel
+        self.texto = texto.strip()
+        self.numero_pedido = numero_pedido
+        self.editavel = editavel
+        self.linha: QHBoxLayout | None = None
+        self.campo_edicao: CampoTexto | None = None
+        self.caixa_edicao: QWidget | None = None
+        self.botao_concluir: QPushButton | None = None
+        self._ocupado = False
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(12, 9, 8, 5)
+        self._layout.setSpacing(4)
         if imagem is not None and imagem.exists():
             miniatura = QPixmap(str(imagem)).scaledToWidth(LARGURA_MINIATURA, Qt.TransformationMode.SmoothTransformation)
-            layout.addWidget(QLabel(pixmap=miniatura))
+            self._layout.addWidget(QLabel(pixmap=miniatura))
         self.rotulo = QLabel(texto, wordWrap=True)
         self.rotulo.setTextFormat(Qt.TextFormat.PlainText if papel == "usuario" else Qt.TextFormat.MarkdownText)
         self.rotulo.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.rotulo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-        layout.addWidget(self.rotulo)
+        self._layout.addWidget(self.rotulo)
+        self._layout.addWidget(self._criar_barra())
+
+    def _criar_barra(self) -> QWidget:
+        self.barra = QWidget()
+        linha = QHBoxLayout(self.barra)
+        linha.setContentsMargins(0, 0, 0, 0)
+        linha.setSpacing(2)
+        do_pedido = "" if self.papel == "usuario" else " a pergunta que gerou esta resposta"
+        acoes = [("copiar", "copiar", "Copiar o texto", self._copiar)]
+        # Um erro não tem o que refazer por si: quem reenvia é o pedido, logo acima.
+        if self.papel != "erro" and self.numero_pedido >= 0:
+            if self.editavel:
+                acoes.append(("editar", "editar", f"Editar{do_pedido or ' esta mensagem'}", lambda: self.edicao_pedida.emit(self)))
+            acoes.append(("reenviar", "reenviar", f"Enviar de novo{do_pedido}", lambda: self.reenvio_pedido.emit(self)))
+        acoes.append(("ler", "ouvir", "Ler em voz alta", lambda: self.leitura_pedida.emit(self)))
+        if self.papel == "usuario":
+            linha.addStretch(1)
+        self.botoes: dict[str, QPushButton] = {}
+        for chave, icone, dica, acao in acoes:
+            botao = QPushButton(objectName="acaoMensagem", toolTip=dica, accessibleName=dica)
+            botao.setIcon(tema.icone(icone))
+            botao.setIconSize(QSize(15, 15))
+            botao.setFixedSize(24, 24)
+            botao.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            botao.clicked.connect(acao)
+            self.botoes[chave] = botao
+            linha.addWidget(botao)
+        if self.papel != "usuario":
+            linha.addStretch(1)
+        return self.barra
+
+    def _copiar(self) -> None:
+        QGuiApplication.clipboard().setText(self.texto)
+        self.botoes["copiar"].setIcon(tema.icone("copiado"))
+        self.botoes["copiar"].setToolTip("Copiado")
+        QTimer.singleShot(TEMPO_DO_AVISO_DE_COPIA_MS, self, self._voltar_icone_de_copia)
+
+    def _voltar_icone_de_copia(self) -> None:
+        self.botoes["copiar"].setIcon(tema.icone("copiar"))
+        self.botoes["copiar"].setToolTip("Copiar o texto")
+
+    def marcar_leitura(self, lendo: bool) -> None:
+        self.botoes["ler"].setIcon(tema.icone("parar" if lendo else "ouvir"))
+        self.botoes["ler"].setToolTip("Parar de ler" if lendo else "Ler em voz alta")
+
+    def definir_ocupado(self, ocupado: bool) -> None:
+        # Copiar e ouvir não mexem na conversa: continuam valendo com o agente trabalhando.
+        self._ocupado = ocupado
+        for chave in ("editar", "reenviar"):
+            if chave in self.botoes:
+                self.botoes[chave].setEnabled(not ocupado)
+        if self.botao_concluir is not None:
+            self.botao_concluir.setEnabled(not ocupado)
+
+    def iniciar_edicao(self) -> None:
+        if self.caixa_edicao is None:
+            self._criar_edicao()
+        self.campo_edicao.setPlainText(self.texto)
+        self.campo_edicao.moveCursor(QTextCursor.MoveOperation.End)
+        self.rotulo.hide()
+        self.barra.hide()
+        self.caixa_edicao.show()
+        self.botao_concluir.setEnabled(not self._ocupado)
+        self.campo_edicao.setFocus()
+
+    def _criar_edicao(self) -> None:
+        self.caixa_edicao = QWidget()
+        coluna = QVBoxLayout(self.caixa_edicao)
+        coluna.setContentsMargins(0, 0, 0, 4)
+        coluna.setSpacing(6)
+        self.campo_edicao = CampoTexto()
+        self.campo_edicao.setFixedHeight(ALTURA_DA_EDICAO)
+        self.campo_edicao.enviar.connect(self._concluir_edicao)
+        atalho = QShortcut(QKeySequence("Esc"), self.campo_edicao, context=Qt.ShortcutContext.WidgetShortcut)
+        atalho.activated.connect(self.cancelar_edicao)
+        coluna.addWidget(self.campo_edicao)
+        linha = QHBoxLayout()
+        linha.addStretch(1)
+        cancelar = QPushButton("Cancelar", objectName="plano")
+        cancelar.clicked.connect(self.cancelar_edicao)
+        self.botao_concluir = QPushButton("Enviar", objectName="primario")
+        self.botao_concluir.clicked.connect(self._concluir_edicao)
+        linha.addWidget(cancelar)
+        linha.addWidget(self.botao_concluir)
+        coluna.addLayout(linha)
+        self._layout.addWidget(self.caixa_edicao)
+
+    def cancelar_edicao(self) -> None:
+        self.caixa_edicao.hide()
+        self.rotulo.show()
+        self.barra.show()
+
+    def _concluir_edicao(self) -> None:
+        novo = self.campo_edicao.toPlainText().strip()
+        if novo and not self._ocupado:
+            self.edicao_concluida.emit(self, novo)
 
 
 class CartaoSugestao(QFrame):
@@ -103,11 +221,18 @@ class PainelChat(QWidget):
     cancelar = Signal()
     imagem_pedida = Signal()
     imagem_recebida = Signal(object)
+    # Número do pedido e o texto novo, ou nada se é para enviar igual.
+    refazer_pedido = Signal(int, object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent, objectName="painel")
         self.setAcceptDrops(True)
         self.referencia: str | None = None
+        self.bolhas: list[Bolha] = []
+        self.leitor = LeitorEmVoz(self)
+        self.leitor.terminou.connect(lambda: self._marcar_leitura(None))
+        self.leitor.falhou.connect(self._ao_falhar_leitura)
+        self._lendo: Bolha | None = None
         self._ocupado = False
         self._seguindo_o_fim = False
         self._inicio_etapa = 0.0
@@ -230,7 +355,18 @@ class PainelChat(QWidget):
 
     def adicionar(self, papel: str, texto: str, imagem: Path | None = None) -> None:
         self.vazio.hide()
-        bolha = Bolha(papel, texto, imagem)
+        pedidos = self.pedidos()
+        if papel == "usuario":
+            numero, editavel = len(pedidos), imagem is None
+        else:
+            numero, editavel = len(pedidos) - 1, bool(pedidos) and pedidos[-1].editavel
+        bolha = Bolha(papel, texto, imagem, numero, editavel)
+        bolha.leitura_pedida.connect(self._alternar_leitura)
+        bolha.edicao_pedida.connect(self._editar_pedido)
+        bolha.reenvio_pedido.connect(lambda b: self.refazer_pedido.emit(b.numero_pedido, None))
+        bolha.edicao_concluida.connect(lambda b, novo: self.refazer_pedido.emit(b.numero_pedido, novo))
+        bolha.definir_ocupado(self._ocupado)
+        self.bolhas.append(bolha)
         linha = QHBoxLayout()
         linha.setContentsMargins(0, 0, 0, 0)
         if papel == "usuario":
@@ -239,8 +375,48 @@ class PainelChat(QWidget):
         else:
             linha.addWidget(bolha, 1)
             linha.addSpacing(12)
+        bolha.linha = linha
         self.lista.insertLayout(self.lista.count() - 1, linha)
         self._rolar_para_o_fim()
+
+    def pedidos(self) -> list[Bolha]:
+        return [b for b in self.bolhas if b.papel == "usuario"]
+
+    def _editar_pedido(self, bolha: Bolha) -> None:
+        # Editar uma resposta é editar a pergunta que a gerou.
+        pedido = self.pedidos()[bolha.numero_pedido]
+        pedido.iniciar_edicao()
+        QTimer.singleShot(0, self, lambda: self.rolagem.ensureWidgetVisible(pedido))
+
+    def remover_desde(self, numero: int) -> None:
+        """Tira da tela esse pedido e tudo o que veio depois dele."""
+        self.parar_leitura()
+        inicio = self.lista.indexOf(self.pedidos()[numero].linha)
+        while self.lista.count() - 1 > inicio:
+            self._descartar(self.lista.takeAt(inicio))
+        self.bolhas = [b for b in self.bolhas if b.numero_pedido < numero]
+
+    def _alternar_leitura(self, bolha: Bolha) -> None:
+        if self._lendo is bolha:
+            self.parar_leitura()
+            return
+        self._marcar_leitura(bolha)
+        self.leitor.ler(texto_para_fala(bolha.texto))
+
+    def parar_leitura(self) -> None:
+        self.leitor.parar()
+        self._marcar_leitura(None)
+
+    def _marcar_leitura(self, bolha: Bolha | None) -> None:
+        if self._lendo is not None:
+            self._lendo.marcar_leitura(False)
+        self._lendo = bolha
+        if bolha is not None:
+            bolha.marcar_leitura(True)
+
+    def _ao_falhar_leitura(self, motivo: str) -> None:
+        self._marcar_leitura(None)
+        self.adicionar_evento(motivo)
 
     def adicionar_evento(self, texto: str) -> None:
         self.vazio.hide()
@@ -267,25 +443,31 @@ class PainelChat(QWidget):
         barra.setValue(barra.maximum())
 
     def limpar(self) -> None:
+        self.parar_leitura()
+        self.bolhas = []
         while self.lista.count() > 1:
-            item = self.lista.takeAt(0)
-            if item.widget() is not None and item.widget() is not self.vazio:
-                item.widget().hide()
-                item.widget().deleteLater()
-            elif item.layout() is not None:
-                while item.layout().count():
-                    interno = item.layout().takeAt(0)
-                    if interno.widget() is not None:
-                        interno.widget().hide()
-                        interno.widget().deleteLater()
-                item.layout().deleteLater()
+            self._descartar(self.lista.takeAt(0))
         self.lista.insertWidget(0, self.vazio)
         self.vazio.show()
+
+    def _descartar(self, item: QLayoutItem) -> None:
+        if item.widget() is not None and item.widget() is not self.vazio:
+            item.widget().hide()
+            item.widget().deleteLater()
+        elif item.layout() is not None:
+            while item.layout().count():
+                interno = item.layout().takeAt(0)
+                if interno.widget() is not None:
+                    interno.widget().hide()
+                    interno.widget().deleteLater()
+            item.layout().deleteLater()
 
     def definir_ocupado(self, ocupado: bool) -> None:
         self._ocupado = ocupado
         self.botao_enviar.setEnabled(not ocupado)
         self.botao_imagem.setEnabled(not ocupado)
+        for bolha in self.bolhas:
+            bolha.definir_ocupado(ocupado)
         self.linha_etapa.setVisible(ocupado)
         self.botao_cancelar.setEnabled(True)
         if ocupado:

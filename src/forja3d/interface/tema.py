@@ -3,7 +3,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon, QPainter, QPixmap
+
 _ICONES = (Path(__file__).parent / "icones").as_posix()
+OPACIDADE_DESLIGADO = 0.3
 
 FUNDO = "#14161a"
 PAINEL = "#1b1e24"
@@ -85,6 +89,9 @@ QPushButton#plano:hover {{ color: {TEXTO}; background: {ELEVADO}; }}
 QPushButton#icone {{ background: transparent; border: none; border-radius: 6px; padding: 0; }}
 QPushButton#icone:hover {{ background: {ELEVADO}; }}
 QPushButton#icone:pressed {{ background: {BORDA}; }}
+QPushButton#acaoMensagem {{ background: transparent; border: none; border-radius: 5px; padding: 0; }}
+QPushButton#acaoMensagem:hover {{ background: {FUNDO}; }}
+QPushButton#acaoMensagem:pressed {{ background: {BORDA}; }}
 QListWidget#listaProvedores {{ background: {ELEVADO}; border: 1px solid {BORDA}; border-radius: 6px; }}
 QFrame#sugestao {{ background: {ELEVADO}; border: 1px solid {BORDA}; border-radius: 6px; }}
 QFrame#sugestao:hover {{ border-color: {ACENTO}; }}
@@ -101,6 +108,22 @@ QStatusBar::item {{ border: none; }}
 QToolTip {{ background: {ELEVADO}; color: {TEXTO}; border: 1px solid {BORDA}; padding: 4px; }}
 QMessageBox {{ background: {PAINEL}; }}
 """
+
+
+def icone(nome: str) -> QIcon:
+    """O Qt quase não muda um ícone cinza quando ele desliga: o estado desligado precisa ser visível."""
+    normal = QIcon(f"{_ICONES}/{nome}.svg").pixmap(48, 48)
+    apagado = QPixmap(normal.size())
+    apagado.fill(Qt.GlobalColor.transparent)
+    pintor = QPainter(apagado)
+    pintor.setOpacity(OPACIDADE_DESLIGADO)
+    pintor.drawPixmap(0, 0, normal)
+    pintor.end()
+    # Só um ícone feito de imagens usa a imagem pedida em qualquer tamanho: o de SVG só no tamanho exato.
+    resultado = QIcon()
+    resultado.addPixmap(normal, QIcon.Mode.Normal)
+    resultado.addPixmap(apagado, QIcon.Mode.Disabled)
+    return resultado
 
 
 def numero(valor: float, casas: int = 1) -> str:

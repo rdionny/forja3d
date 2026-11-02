@@ -49,12 +49,14 @@ class PainelChecks(QWidget):
         while self.lista.count() > 1:
             item = self.lista.takeAt(0)
             if item.widget() is not None:
+                item.widget().hide()
                 item.widget().deleteLater()
         self._vazio = QLabel("A verificação aparece aqui depois que a peça for gerada.", objectName="suave", wordWrap=True)
         self.lista.insertWidget(0, self._vazio)
 
     def _adicionar(self, tipo: str, texto: str) -> None:
         if self._vazio is not None:
+            self._vazio.hide()
             self._vazio.deleteLater()
             self._vazio = None
         self.lista.insertWidget(self.lista.count() - 1, ItemCheck(tipo, texto))

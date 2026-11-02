@@ -1,10 +1,31 @@
 """Lista de peças e de versões da peça aberta."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget
+from pathlib import Path
+
+from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from forja3d.projetos.armazenamento import Projeto
+
+ICONE_FIXADO = Path(__file__).parent / "icones" / "fixado.svg"
+
+
+class ListaDeProjetos(QListWidget):
+    def mousePressEvent(self, evento) -> None:
+        # O botão direito só abre o menu: a marca continua na peça que está aberta.
+        if evento.button() == Qt.MouseButton.LeftButton:
+            super().mousePressEvent(evento)
 
 
 class PainelVersoes(QWidget):
@@ -12,6 +33,11 @@ class PainelVersoes(QWidget):
     projeto_escolhido = Signal(object)
     versao_escolhida = Signal(str)
     restaurar_pedido = Signal(str)
+    renomear_pedido = Signal(object)
+    fixar_pedido = Signal(object)
+    apagar_pedido = Signal(object)
+    salvar_como_pedido = Signal(object)
+    abrir_arquivo_pedido = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent, objectName="painel")
@@ -24,13 +50,18 @@ class PainelVersoes(QWidget):
         topo.addWidget(QLabel("PEÇAS", objectName="titulo"), 1)
         self.botao_nova = QPushButton("+ Nova", objectName="plano")
         self.botao_nova.clicked.connect(self.nova_peca)
+        self.botao_abrir = QPushButton("Abrir", objectName="plano", toolTip="Abre um arquivo .forja3d, seu ou de outra pessoa (Ctrl+O)")
+        self.botao_abrir.clicked.connect(self.abrir_arquivo_pedido)
+        topo.addWidget(self.botao_abrir)
         topo.addWidget(self.botao_nova)
         layout.addLayout(topo)
 
-        self.lista_projetos = QListWidget()
+        self.lista_projetos = ListaDeProjetos()
         self.lista_projetos.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.lista_projetos.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.lista_projetos.itemClicked.connect(self._clicou_projeto)
+        self.lista_projetos.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.lista_projetos.customContextMenuRequested.connect(self._abrir_menu_do_projeto)
         layout.addWidget(self.lista_projetos, 3)
 
         layout.addSpacing(6)
@@ -50,10 +81,29 @@ class PainelVersoes(QWidget):
         for projeto in projetos:
             item = QListWidgetItem(projeto.titulo)
             item.setData(Qt.ItemDataRole.UserRole, projeto)
-            item.setToolTip(projeto.pasta.name)
+            item.setToolTip(f"{projeto.titulo}\n{projeto.pasta.name}")
+            if projeto.fixado:
+                item.setIcon(QIcon(str(ICONE_FIXADO)))
             self.lista_projetos.addItem(item)
             if atual is not None and projeto.pasta == atual.pasta:
                 item.setSelected(True)
+
+    def _menu_do_projeto(self, projeto: Projeto) -> QMenu:
+        menu = QMenu(self)
+        menu.addAction("Renomear", lambda: self.renomear_pedido.emit(projeto))
+        menu.addAction("Desafixar do topo" if projeto.fixado else "Fixar no topo", lambda: self.fixar_pedido.emit(projeto))
+        menu.addAction("Salvar como…", lambda: self.salvar_como_pedido.emit(projeto))
+        menu.addSeparator()
+        menu.addAction("Apagar", lambda: self.apagar_pedido.emit(projeto))
+        return menu
+
+    def _abrir_menu_do_projeto(self, posicao: QPoint) -> None:
+        item = self.lista_projetos.itemAt(posicao)
+        if item is None:
+            return
+        menu = self._menu_do_projeto(item.data(Qt.ItemDataRole.UserRole))
+        menu.exec(self.lista_projetos.viewport().mapToGlobal(posicao))
+        menu.deleteLater()
 
     def atualizar_versoes(self, projeto: Projeto | None, atual: str | None) -> None:
         self._versao_atual = atual

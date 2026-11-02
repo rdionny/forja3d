@@ -6,7 +6,7 @@ import os
 import sys
 import traceback
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QLibraryInfo, Qt, QTranslator
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMessageBox, QSplashScreen
 
@@ -52,6 +52,13 @@ def _tratar_excecao(tipo, valor, rastro) -> None:  # noqa: ANN001
         QMessageBox.critical(None, "Forja3D", "Aconteceu um erro inesperado. Os detalhes foram para o log.")
 
 
+def instalar_traducao(aplicativo: QApplication) -> None:
+    """Os botões prontos do Qt, como Yes e Cancel, em português."""
+    tradutor = QTranslator(aplicativo)
+    if tradutor.load("qtbase_pt_BR", QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)):
+        aplicativo.installTranslator(tradutor)
+
+
 def executar() -> int:
     os.environ.setdefault("QT_API", "pyside6")
     config = configuracao.carregar()
@@ -59,6 +66,7 @@ def executar() -> int:
     sys.excepthook = _tratar_excecao
 
     aplicativo = QApplication(sys.argv)
+    instalar_traducao(aplicativo)
     aplicativo.setApplicationName("Forja3D")
     aplicativo.setWindowIcon(QIcon(criar_icone()))
     aplicativo.setStyleSheet(tema.ESTILO)

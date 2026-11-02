@@ -23,6 +23,7 @@ __pycache__/
 # Peças do usuário e saídas de teste
 /projetos/
 /saida/
+*.forja3d
 
 # Programas externos baixados
 /ferramentas/

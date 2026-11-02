@@ -278,6 +278,6 @@ class FluxoConceitos:
             "observacao": resultado.observacao,
         }
         self.projeto.salvar_conceito_escolhido(conceito)
-        self.projeto.estado["titulo"] = resultado.opcao.titulo
+        self.projeto.titulo_automatico(resultado.opcao.titulo)
         self.projeto.salvar_estado()
         return conceito

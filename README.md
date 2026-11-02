@@ -26,12 +26,40 @@ Copie `config/ia_padrao.example.toml` para `config/ia_padrao.toml` e preencha a 
 
 - **Mover:** clique em um item e arraste. A vista **Topo** é a melhor para posicionar. O que está na mesa é o que vai imprimir.
 - **Câmera:** arraste o espaço vazio para girar, use a roda para aproximar e Shift + arrastar para mover a vista.
-- **Copiar e cia.:** com o item selecionado, use os botões ou Ctrl+C, Ctrl+V, Ctrl+D (duplicar), R (girar 90°), Delete e Ctrl+Z. O botão direito abre o mesmo menu. Deletar tira só da mesa: o modelo continua igual, e o botão **Mesa** adiciona a parte de novo.
+- **Copiar e cia.:** com o item selecionado, use os botões ou Ctrl+C, Ctrl+V, Ctrl+D (duplicar), R (girar 90°) e Delete. O botão direito abre o mesmo menu. Deletar tira só da mesa: o modelo continua igual, e o botão **Mesa** adiciona a parte de novo.
+- **Desfazer e refazer:** use os ícones no topo, Ctrl+Z e Ctrl+Y. Valem para as alterações na mesa da versão aberta, até trocar de versão ou de peça.
 - **Arquivos diferentes:** em **Mesa > Mover para o arquivo**, separe os itens para imprimir em outro momento. Cada arquivo vira um G-code. O que não couber em um arquivo vai sozinho para outro.
 - **Pedir um ajuste em uma parte:** selecione o item e clique em **Enviar à IA**. A próxima mensagem do chat vai falar só daquela parte, e o agente recebe as vistas dela.
 - **Tempo:** depois de preparar, o app mostra quanto a impressão demora e a que horas fica pronta se começar agora. É a estimativa do OrcaSlicer, que não conta aquecimento nem nivelamento.
 
 Mudar a mesa invalida o G-code preparado: é preciso clicar em **Aprovar e preparar** de novo.
+
+### Na conversa
+
+Cada mensagem tem uma barra com quatro ações:
+
+- **Copiar:** leva o texto para a área de transferência.
+- **Editar:** abre a mensagem para você reescrever. Em uma resposta, abre a pergunta que a gerou.
+- **Enviar de novo:** refaz a resposta. Em uma resposta, reenvia a pergunta que a gerou.
+- **Ler:** lê em voz alta com a voz do Windows, sem mandar o texto para fora do computador. Clique de novo para parar.
+
+Editar e enviar de novo voltam a conversa até aquela mensagem: o que veio depois sai da conversa, e a peça volta para a versão daquele momento. As versões mais novas continuam na lista, e uma cópia da conversa antiga fica em `conversas_anteriores/`, na pasta do projeto. Antes de tirar outros pedidos da conversa, o app pergunta.
+
+### Na lista de peças
+
+Clique com o botão direito em uma peça para **renomear**, **fixar no topo** ou **apagar**. Apagar manda a pasta do projeto para a Lixeira do Windows, de onde ela ainda pode voltar.
+
+### Salvar e compartilhar
+
+O app guarda tudo sozinho na pasta `projetos/`. Para levar um projeto para outro lugar ou passar para outra pessoa, use o botão **Arquivo**, ao lado do nome do programa:
+
+- **Salvar** (Ctrl+S): grava no arquivo escolhido antes. Na primeira vez, pergunta onde.
+- **Salvar como** (Ctrl+Shift+S): escolhe outro local ou nome. Também está no botão direito da lista de peças.
+- **Abrir arquivo** (Ctrl+O): cria na sua lista uma cópia do projeto que está no arquivo `.forja3d`. Também há o botão **Abrir**, acima da lista.
+
+O arquivo leva a conversa, as versões, a mesa e as imagens de referência. Veja se não há nada na conversa que você prefira não passar adiante.
+
+Ele não leva o G-code, a verificação, a chave da API nem as conversas descartadas. Quem abre tem a peça verificada de novo no próprio computador e prepara o G-code lá. Só a versão atual é verificada ao abrir: as outras são verificadas quando a pessoa voltar para elas.
 
 ### A partir de uma imagem
 
@@ -51,6 +79,7 @@ A IA nunca escreve G-code e não tem como exportar arquivos: isso depende do seu
 ## Limites conhecidos
 
 - **Segurança do código da IA:** o script gerado passa por uma análise, roda em processo separado, com tempo e memória limitados e sem a chave da API. Isso reduz bastante o risco, **mas não é uma sandbox completa**.
+- **Arquivo de outra pessoa:** tudo é conferido ao abrir, nada do arquivo é executado, e o G-code é sempre gerado e validado no seu computador. Mesmo assim, o script e a conversa do arquivo vão para o agente como contexto, e um texto mal-intencionado ainda pode tentar influenciar o modelo. Abra só arquivos de quem você conhece.
 - **Chave da API:** o endpoint padrão usa HTTP sem criptografia, então a chave e os pedidos trafegam em texto aberto. Ela fica em `config/ia_padrao.toml`, fora do Git. Para trocar, use **Configurações**.
 - **Impressão:** enquanto a calibração não for feita, folgas e furos usam valores iniciais comuns em FDM. Encaixes podem precisar de ajuste.
 - **Sem sensor de fim de filamento:** confira se o carretel tem o bastante antes de imprimir.

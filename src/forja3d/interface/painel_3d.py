@@ -38,6 +38,7 @@ DICA_DA_MESA = "Clique em um item para selecionar. Arraste para mover."
 class Painel3D(QWidget):
     mesa_mudou = Signal()
     referencia_pedida = Signal(str)
+    desfazer_mudou = Signal(bool, bool)
 
     def __init__(self, perfil: dict[str, Any], parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -51,6 +52,7 @@ class Painel3D(QWidget):
         self.brim_mm = 0.0
         self._copiado: tuple[str, int] | None = None
         self._historico: list[dict[str, Any]] = []
+        self._refeitos: list[dict[str, Any]] = []
         self._malhas: dict[str, tuple[Any, Any]] = {}
         self._atores: dict[str, tuple[Any, Any]] = {}
         self._arrasto: dict[str, Any] | None = None
@@ -77,6 +79,8 @@ class Painel3D(QWidget):
             (QKeySequence.StandardKey.Delete, self.deletar),
             ("R", self.girar),
             (QKeySequence.StandardKey.Undo, self.desfazer),
+            ("Ctrl+Y", self.refazer),
+            ("Ctrl+Shift+Z", self.refazer),
             ("Esc", lambda: self.selecionar(None)),
         ):
             atalho = QShortcut(QKeySequence(tecla), self)
@@ -223,6 +227,7 @@ class Painel3D(QWidget):
         self.selecionado = None
         self.editavel = False
         self._historico = []
+        self._refeitos = []
         self._limites_peca = None
         self._arrasto = None
         self.rotulo_medida.setText("")
@@ -324,6 +329,7 @@ class Painel3D(QWidget):
         self.botao_mais.setEnabled(self.editavel)
         self.botao_ia.setEnabled(tem_selecao)
         self.combo_arquivo.setEnabled(self.mesa is not None and len(self.mesa.arquivos()) > 1)
+        self.desfazer_mudou.emit(self.editavel and bool(self._historico), self.editavel and bool(self._refeitos))
 
     def _atualizar_textos(self) -> None:
         if self.mesa is None:
@@ -374,8 +380,10 @@ class Painel3D(QWidget):
         if self.cena is not None:
             self.cena.render()
 
-    def _guardar_para_desfazer(self) -> None:
-        self._historico.append(self.mesa.para_dados())
+    def _guardar_para_desfazer(self, estado: dict[str, Any] | None = None) -> None:
+        self._historico.append(estado or self.mesa.para_dados())
+        # Uma alteração nova abre outro caminho: o que foi desfeito antes não tem mais como voltar.
+        self._refeitos = []
 
     def _depois_de_mudar(self) -> None:
         self._redesenhar()
@@ -452,10 +460,19 @@ class Painel3D(QWidget):
 
     def desfazer(self) -> None:
         if self.editavel and self.mesa is not None and self._historico:
-            self.mesa.restaurar(self._historico.pop())
-            if self.mesa.item(self.selecionado) is None:
-                self.selecionado = None
-            self._depois_de_mudar()
+            self._refeitos.append(self.mesa.para_dados())
+            self._restaurar(self._historico.pop())
+
+    def refazer(self) -> None:
+        if self.editavel and self.mesa is not None and self._refeitos:
+            self._historico.append(self.mesa.para_dados())
+            self._restaurar(self._refeitos.pop())
+
+    def _restaurar(self, estado: dict[str, Any]) -> None:
+        self.mesa.restaurar(estado)
+        if self.mesa.item(self.selecionado) is None:
+            self.selecionado = None
+        self._depois_de_mudar()
 
     def enviar_para_ia(self) -> None:
         item = self._item_editavel()
@@ -493,6 +510,8 @@ class Painel3D(QWidget):
         menu.addAction("Organizar a mesa", self.organizar)
         desfazer = menu.addAction("Desfazer", self.desfazer)
         desfazer.setEnabled(bool(self._historico))
+        refazer = menu.addAction("Refazer", self.refazer)
+        refazer.setEnabled(bool(self._refeitos))
 
     def _abrir_menu_do_item(self, posicao: QPoint) -> None:
         menu = QMenu(self)
@@ -565,9 +584,10 @@ class Painel3D(QWidget):
         if evento.button() == Qt.MouseButton.LeftButton and self._arrasto is not None:
             arrasto, self._arrasto = self._arrasto, None
             if arrasto["moveu"]:
-                self._historico.append(arrasto["antes"])
+                self._guardar_para_desfazer(arrasto["antes"])
                 self._colorir()
                 self._atualizar_limites()
+                self._atualizar_barra()
                 self._atualizar_textos()
                 self.cena.render()
                 self.mesa_mudou.emit()

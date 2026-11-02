@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import tempfile
@@ -41,12 +42,7 @@ class Projeto:
     @classmethod
     def criar(cls, pasta_projetos: Path, titulo: str = "Nova peça") -> "Projeto":
         pasta_projetos.mkdir(parents=True, exist_ok=True)
-        base = f"peca_{datetime.now():%Y%m%d_%H%M%S}"
-        pasta = pasta_projetos / base
-        contador = 1
-        while pasta.exists():
-            contador += 1
-            pasta = pasta_projetos / f"{base}_{contador}"
+        pasta = cls.caminho_novo(pasta_projetos)
         pasta.mkdir()
         projeto = cls(pasta)
         projeto.estado["titulo"] = titulo
@@ -54,16 +50,59 @@ class Projeto:
         return projeto
 
     @staticmethod
+    def caminho_novo(pasta_projetos: Path) -> Path:
+        base = f"peca_{datetime.now():%Y%m%d_%H%M%S}"
+        pasta = pasta_projetos / base
+        contador = 1
+        while pasta.exists():
+            contador += 1
+            pasta = pasta_projetos / f"{base}_{contador}"
+        return pasta
+
+    @staticmethod
     def listar(pasta_projetos: Path) -> list["Projeto"]:
         if not pasta_projetos.exists():
             return []
-        pastas = [p for p in pasta_projetos.iterdir() if (p / "projeto.json").exists()]
+        # Pasta que começa com _ ainda está sendo montada.
+        pastas = [p for p in pasta_projetos.iterdir() if not p.name.startswith("_") and (p / "projeto.json").exists()]
         pastas.sort(key=lambda p: (p / "projeto.json").stat().st_mtime, reverse=True)
-        return [Projeto(p) for p in pastas]
+        projetos = [Projeto(p) for p in pastas]
+        projetos.sort(key=lambda p: not p.fixado)
+        return projetos
 
     @property
     def titulo(self) -> str:
         return self.estado["titulo"]
+
+    @property
+    def fixado(self) -> bool:
+        return bool(self.estado.get("fixado"))
+
+    def titulo_automatico(self, titulo: str) -> None:
+        """O título que o agente sugere não passa por cima do nome que o usuário escolheu."""
+        if not self.estado.get("titulo_manual"):
+            self.estado["titulo"] = titulo
+
+    def renomear(self, titulo: str) -> None:
+        self.estado["titulo"] = titulo
+        self.estado["titulo_manual"] = True
+        self._salvar_sem_mudar_a_ordem()
+
+    def fixar(self, fixado: bool) -> None:
+        self.estado["fixado"] = fixado
+        self._salvar_sem_mudar_a_ordem()
+
+    def marcar_arquivo(self, arquivo: Path) -> None:
+        """Lembra onde o projeto foi salvo. O caminho fica aqui, e nunca vai junto no arquivo."""
+        self.estado["arquivo"] = str(arquivo)
+        self._salvar_sem_mudar_a_ordem()
+
+    def _salvar_sem_mudar_a_ordem(self) -> None:
+        # A lista ordena pela data deste arquivo: renomear não conta como mexer na peça.
+        arquivo = self.pasta / "projeto.json"
+        instante = arquivo.stat().st_mtime
+        self.salvar_estado()
+        os.utime(arquivo, (instante, instante))
 
     def salvar_estado(self) -> None:
         gravar_json(self.pasta / "projeto.json", self.estado)
@@ -89,10 +128,16 @@ class Projeto:
         gravar_json(pasta_execucao / "especificacao.json", especificacao)
         gravar_json(pasta_execucao / "info.json", {"resumo": resumo, "criado_em": datetime.now().isoformat(timespec="seconds")})
         # A mesa acompanha a peça: um ajuste do agente não desfaz o que o usuário posicionou.
-        if existentes and (self.pasta / existentes[-1] / "layout.json").exists():
-            shutil.copyfile(self.pasta / existentes[-1] / "layout.json", pasta_execucao / "layout.json")
+        origem = self.estado.get("versao_atual") or (existentes[-1] if existentes else None)
+        if origem and (self.pasta / origem / "layout.json").exists():
+            shutil.copyfile(self.pasta / origem / "layout.json", pasta_execucao / "layout.json")
         pasta_execucao.replace(self.pasta / versao)
         return versao
+
+    def versao_em(self, instante: str) -> str | None:
+        """A versão mais nova que já existia naquele momento."""
+        anteriores = [v for v in self.versoes() if self.info_versao(v).get("criado_em", "") <= instante]
+        return anteriores[-1] if anteriores else None
 
     def medidas(self, versao: str) -> list[dict[str, Any]]:
         return ler_json(self.pasta_versao(versao) / "medidas.json", [])
@@ -158,8 +203,8 @@ class Projeto:
     def conceito_escolhido(self) -> dict[str, Any] | None:
         return ler_json(self.pasta / "conceitos" / "conceito_escolhido.json")
 
-    def registrar_conversa(self, papel: str, texto: str, imagem: str | None = None) -> None:
-        registro = {"papel": papel, "texto": texto, "em": datetime.now().isoformat(timespec="seconds")}
+    def registrar_conversa(self, papel: str, texto: str, imagem: str | None = None, **marco: Any) -> None:
+        registro = {"papel": papel, "texto": texto, "em": datetime.now().isoformat(timespec="seconds"), **marco}
         if imagem:
             registro["imagem"] = imagem
         with open(self.pasta / "conversa.jsonl", "a", encoding="utf-8") as arquivo:
@@ -170,6 +215,24 @@ class Projeto:
         if not arquivo.exists():
             return []
         return [json.loads(linha) for linha in arquivo.read_text(encoding="utf-8").splitlines() if linha.strip()]
+
+    def pedidos(self) -> list[dict[str, Any]]:
+        return [r for r in self.ler_conversa() if r["papel"] == "usuario"]
+
+    def reescrever_conversa(self, registros: list[dict[str, Any]]) -> None:
+        linhas = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in registros)
+        gravar_bytes(self.pasta / "conversa.jsonl", linhas.encode("utf-8"))
+
+    def arquivar_conversa(self) -> Path:
+        """Guarda uma cópia antes de a conversa perder mensagens: um clique errado não pode apagar nada de vez."""
+        pasta = self.pasta / "conversas_anteriores"
+        pasta.mkdir(exist_ok=True)
+        destino = pasta / f"{len(list(pasta.iterdir())) + 1:03d}"
+        destino.mkdir()
+        for nome in ("conversa.jsonl", "historico.json"):
+            if (self.pasta / nome).exists():
+                shutil.copyfile(self.pasta / nome, destino / nome)
+        return destino
 
     def salvar_historico(self, mensagens: list[dict[str, Any]]) -> None:
         gravar_json(self.pasta / "historico.json", mensagens)

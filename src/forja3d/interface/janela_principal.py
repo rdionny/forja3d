@@ -2,21 +2,24 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QEvent, QObject, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import QEvent, QFile, QObject, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSpinBox,
@@ -48,6 +51,7 @@ from forja3d.interface.painel_checks import PainelChecks
 from forja3d.interface.painel_versoes import PainelVersoes
 from forja3d.interface.trabalhador import Trabalhador
 from forja3d.projetos.armazenamento import Projeto
+from forja3d.projetos.compartilhar import EXTENSAO, com_extensao, nome_do_arquivo
 from forja3d.registro import proteger_chaves
 
 log = logging.getLogger(__name__)
@@ -55,6 +59,13 @@ log = logging.getLogger(__name__)
 ICONE_CONFIGURACOES = Path(__file__).parent / "icones" / "engrenagem.svg"
 QUALIDADES = (("Padrão, 0,20 mm", "padrao"), ("Ótima, 0,16 mm", "otima"), ("Fina, 0,12 mm", "fina"), ("Rascunho, 0,24 mm", "rascunho"))
 AJUSTES_POR_CARGA = {"nenhuma": (2, 15), "leve": (3, 15), "media": (4, 25), "alta": (5, 40)}
+FILTRO_DE_PROJETO = f"Projeto do Forja3D (*{EXTENSAO})"
+PEDIDO_DE_PARTE = re.compile(r"^Sobre a parte (\S+): (.*)$", re.DOTALL)
+
+
+def mandar_para_a_lixeira(pasta: Path) -> bool:
+    resultado = QFile.moveToTrash(str(pasta))
+    return resultado[0] if isinstance(resultado, tuple) else bool(resultado)
 
 
 class SemRodaSemFoco(QObject):
@@ -72,6 +83,9 @@ class JanelaPrincipal(QMainWindow):
     _pedir_parte = Signal(str, str)
     _pedir_conceito = Signal(object)
     _pedir_fatiar = Signal(object)
+    _pedir_verificacao = Signal()
+    _pedir_salvar_arquivo = Signal(object, object)
+    _pedir_importar_arquivo = Signal(object, object)
     _estado_ia = Signal(bool, str)
 
     def __init__(self, config: Configuracao, perfil: dict[str, Any], fabrica_cliente: Callable[..., Any] = ClienteIA, verificar_endpoint: bool = True) -> None:
@@ -147,10 +161,18 @@ class JanelaPrincipal(QMainWindow):
         linha = QHBoxLayout(topo)
         linha.setContentsMargins(14, 8, 10, 8)
         linha.addWidget(QLabel("Forja3D", objectName="marca"))
-        linha.addSpacing(10)
+        linha.addSpacing(6)
+        linha.addWidget(self._criar_botao_arquivo())
+        linha.addSpacing(6)
         self.rotulo_projeto = QLabel("Nova peça", objectName="suave")
+        self.rotulo_projeto.setTextFormat(Qt.TextFormat.PlainText)
         linha.addWidget(self.rotulo_projeto)
         linha.addStretch(1)
+        self.botao_desfazer = self._criar_botao_da_mesa("desfazer", "Desfazer a última alteração na mesa (Ctrl+Z)", "Desfazer", self.painel_3d.desfazer)
+        self.botao_refazer = self._criar_botao_da_mesa("refazer", "Refazer o que foi desfeito na mesa (Ctrl+Y)", "Refazer", self.painel_3d.refazer)
+        linha.addWidget(self.botao_desfazer)
+        linha.addWidget(self.botao_refazer)
+        linha.addSpacing(10)
         linha.addWidget(QLabel("Creality Ender-3 V3 SE, bico de 0,4 mm", objectName="suave"))
         linha.addSpacing(10)
         self.botao_config = QPushButton(objectName="icone", toolTip="Configurações: modelos e provedores de IA", accessibleName="Configurações")
@@ -160,6 +182,31 @@ class JanelaPrincipal(QMainWindow):
         self.botao_config.clicked.connect(self._abrir_configuracoes)
         linha.addWidget(self.botao_config)
         return topo
+
+    def _criar_botao_arquivo(self) -> QPushButton:
+        self.botao_arquivo = QPushButton("Arquivo", objectName="plano", toolTip="Salva o projeto em um arquivo, para guardar ou passar para outra pessoa")
+        menu = QMenu(self)
+        self.acao_salvar = menu.addAction("Salvar", self._salvar)
+        self.acao_salvar.setShortcut(QKeySequence.StandardKey.Save)
+        self.acao_salvar_como = menu.addAction("Salvar como…", self._salvar_como)
+        self.acao_salvar_como.setShortcut(QKeySequence("Ctrl+Shift+S"))
+        menu.addSeparator()
+        self.acao_abrir = menu.addAction("Abrir arquivo…", self._abrir_arquivo)
+        self.acao_abrir.setShortcut(QKeySequence.StandardKey.Open)
+        self.botao_arquivo.setMenu(menu)
+        # Um atalho só vale em uma ação da janela: o menu fica escondido.
+        self.addActions([self.acao_salvar, self.acao_salvar_como, self.acao_abrir])
+        return self.botao_arquivo
+
+    def _criar_botao_da_mesa(self, icone: str, dica: str, nome: str, acao: Callable[[], None]) -> QPushButton:
+        botao = QPushButton(objectName="icone", toolTip=dica, accessibleName=nome, enabled=False)
+        botao.setIcon(tema.icone(icone))
+        botao.setIconSize(QSize(20, 20))
+        botao.setFixedSize(32, 32)
+        # O foco fica na mesa, para os atalhos continuarem valendo depois do clique.
+        botao.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        botao.clicked.connect(acao)
+        return botao
 
     def _criar_barra_impressao(self) -> QWidget:
         barra = QFrame(objectName="barraImpressao")
@@ -221,17 +268,31 @@ class JanelaPrincipal(QMainWindow):
         self.painel_chat.cancelar.connect(self._cancelar)
         self.painel_chat.imagem_pedida.connect(self._escolher_imagem)
         self.painel_chat.imagem_recebida.connect(self._abrir_conceitos)
+        self.painel_chat.refazer_pedido.connect(self._refazer_pedido)
         self.painel_3d.mesa_mudou.connect(self._ao_mudar_mesa)
         self.painel_3d.referencia_pedida.connect(self.painel_chat.definir_referencia)
+        self.painel_3d.desfazer_mudou.connect(self.botao_desfazer.setEnabled)
+        self.painel_3d.desfazer_mudou.connect(lambda _desfazer, refazer: self.botao_refazer.setEnabled(refazer))
         self.painel_versoes.nova_peca.connect(self._nova_peca)
         self.painel_versoes.projeto_escolhido.connect(self.abrir_projeto)
         self.painel_versoes.versao_escolhida.connect(self._ver_versao)
         self.painel_versoes.restaurar_pedido.connect(self._restaurar_versao)
+        self.painel_versoes.renomear_pedido.connect(self._renomear_projeto)
+        self.painel_versoes.fixar_pedido.connect(self._fixar_projeto)
+        self.painel_versoes.apagar_pedido.connect(self._apagar_projeto)
+        self.painel_versoes.salvar_como_pedido.connect(self._salvar_como)
+        self.painel_versoes.abrir_arquivo_pedido.connect(self._abrir_arquivo)
 
         self._pedir_processar.connect(self.trabalhador.processar)
         self._pedir_parte.connect(self.trabalhador.processar_parte)
         self._pedir_conceito.connect(self.trabalhador.processar_conceito)
         self._pedir_fatiar.connect(self.trabalhador.aprovar_e_fatiar)
+        self._pedir_verificacao.connect(self.trabalhador.verificar)
+        self._pedir_salvar_arquivo.connect(self.trabalhador.salvar_arquivo)
+        self._pedir_importar_arquivo.connect(self.trabalhador.importar_arquivo)
+        self.trabalhador.arquivo_salvo.connect(self._ao_salvar_arquivo)
+        self.trabalhador.projeto_importado.connect(self._ao_importar_arquivo)
+        self.trabalhador.arquivo_falhou.connect(self._ao_falhar_arquivo)
         self.trabalhador.resposta.connect(self._ao_responder)
         self.trabalhador.erro.connect(self._ao_errar)
         self.trabalhador.concluido.connect(self._ao_concluir)
@@ -262,6 +323,7 @@ class JanelaPrincipal(QMainWindow):
         self.ocupado = ocupado
         self.painel_chat.definir_ocupado(ocupado)
         self.painel_versoes.botao_nova.setEnabled(not ocupado)
+        self.painel_versoes.botao_abrir.setEnabled(not ocupado)
         self.painel_versoes.lista_projetos.setEnabled(not ocupado)
         self.painel_versoes.lista_versoes.setEnabled(not ocupado)
         self.painel_versoes.botao_restaurar.setEnabled(not ocupado)
@@ -281,6 +343,9 @@ class JanelaPrincipal(QMainWindow):
         self.botao_aprovar.setEnabled(pode_aprovar)
         self.botao_aprovar.setText("Preparar de novo" if liberado else "Aprovar e preparar")
         self.botao_exportar.setEnabled(liberado)
+        self.acao_salvar.setEnabled(not self.ocupado and self.projeto is not None)
+        self.acao_salvar_como.setEnabled(not self.ocupado and self.projeto is not None)
+        self.acao_abrir.setEnabled(not self.ocupado)
         # Só a próxima ação fica em destaque.
         for botao, destaque in ((self.botao_aprovar, not liberado), (self.botao_exportar, liberado)):
             botao.setObjectName("primario" if destaque else "")
@@ -378,6 +443,102 @@ class JanelaPrincipal(QMainWindow):
         if agente.especificacao:
             self._ajustar_por_especificacao(agente.especificacao.model_dump())
         self._ver_versao(agente.versao_atual)
+        self._verificar_se_faltar()
+
+    def _verificar_se_faltar(self) -> None:
+        agente = self.orquestrador
+        if agente is None or self.ocupado or not agente.versao_atual or not agente.especificacao or agente.resultado_verificacao is not None:
+            return
+        agente.preparar_operacao()
+        self._definir_ocupado(True)
+        self.painel_chat.definir_etapa("Verificando a peça")
+        self._pedir_verificacao.emit()
+
+    # ---------- Arquivo .forja3d ----------
+
+    def _salvar(self) -> None:
+        """No arquivo já escolhido. Sem arquivo ainda, é o mesmo que Salvar como."""
+        if self.projeto is None or self.ocupado:
+            return
+        destino = self.projeto.estado.get("arquivo")
+        if destino:
+            self._gravar_arquivo(self.projeto, Path(destino))
+        else:
+            self._salvar_como()
+
+    def _salvar_como(self, projeto: Projeto | None = None) -> None:
+        alvo = self._o_mesmo_projeto(projeto) if projeto is not None else self.projeto
+        if alvo is None or self.ocupado:
+            return
+        inicial = alvo.estado.get("arquivo") or str(Path.home() / "Documents" / nome_do_arquivo(alvo.titulo))
+        destino, _ = QFileDialog.getSaveFileName(self, "Salvar como", inicial, FILTRO_DE_PROJETO)
+        if destino:
+            self._gravar_arquivo(alvo, com_extensao(Path(destino)))
+
+    def _gravar_arquivo(self, projeto: Projeto, destino: Path) -> None:
+        self._iniciar_tarefa_de_arquivo("Salvando o arquivo")
+        self._pedir_salvar_arquivo.emit(projeto, destino)
+
+    def _abrir_arquivo(self) -> None:
+        if self.ocupado:
+            return
+        caminho, _ = QFileDialog.getOpenFileName(self, "Abrir arquivo", str(Path.home() / "Documents"), FILTRO_DE_PROJETO)
+        if caminho:
+            self._iniciar_tarefa_de_arquivo("Conferindo o arquivo")
+            self._pedir_importar_arquivo.emit(Path(caminho), self.config.pasta_projetos)
+
+    def _iniciar_tarefa_de_arquivo(self, etapa: str) -> None:
+        self._definir_ocupado(True)
+        self.painel_chat.definir_etapa(etapa)
+        # Salvar e abrir terminam em segundos e não têm como parar no meio.
+        self.painel_chat.botao_cancelar.setEnabled(False)
+
+    def _ao_salvar_arquivo(self, destino: Path) -> None:
+        self.statusBar().showMessage(f"Salvo em {destino}", 8000)
+
+    def _ao_importar_arquivo(self, projeto: Projeto) -> None:
+        self.abrir_projeto(projeto)
+        self._recarregar_projetos()
+
+    def _ao_falhar_arquivo(self, motivo: str) -> None:
+        QMessageBox.warning(self, "Arquivo", motivo)
+
+    def _o_mesmo_projeto(self, projeto: Projeto) -> Projeto:
+        """A peça aberta tem seu objeto próprio: gravar por outra cópia seria desfeito no próximo salvamento."""
+        return self.projeto if self.projeto is not None and self.projeto.pasta == projeto.pasta else projeto
+
+    def _renomear_projeto(self, projeto: Projeto) -> None:
+        alvo = self._o_mesmo_projeto(projeto)
+        titulo, confirmou = QInputDialog.getText(self, "Renomear", "Nome da conversa:", text=alvo.titulo)
+        if not confirmou or not titulo.strip():
+            return
+        alvo.renomear(titulo.strip())
+        if alvo is self.projeto:
+            self.rotulo_projeto.setText(alvo.titulo)
+        self._recarregar_projetos()
+
+    def _fixar_projeto(self, projeto: Projeto) -> None:
+        alvo = self._o_mesmo_projeto(projeto)
+        alvo.fixar(not alvo.fixado)
+        self._recarregar_projetos()
+
+    def _apagar_projeto(self, projeto: Projeto) -> None:
+        if self.ocupado:
+            return
+        resposta = QMessageBox.question(
+            self,
+            "Apagar projeto",
+            f"Apagar “{projeto.titulo}”?\n\nA conversa, as versões e os G-codes vão para a Lixeira do Windows.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if resposta != QMessageBox.StandardButton.Yes:
+            return
+        if self.projeto is not None and self.projeto.pasta == projeto.pasta:
+            self._nova_peca()
+        if not mandar_para_a_lixeira(projeto.pasta):
+            QMessageBox.warning(self, "Apagar projeto", f"Não consegui mover para a Lixeira:\n{projeto.pasta}\n\nO projeto continua na lista.")
+        self._recarregar_projetos()
 
     def _ver_versao(self, versao: str | None) -> None:
         self.versao_vista = versao
@@ -432,6 +593,7 @@ class JanelaPrincipal(QMainWindow):
         self.painel_versoes.atualizar_versoes(self.projeto, versao)
         self.painel_chat.adicionar_evento(f"Voltou para a versão {versao}.")
         self._ver_versao(versao)
+        self._verificar_se_faltar()
 
     # ---------- Agente ----------
 
@@ -449,6 +611,9 @@ class JanelaPrincipal(QMainWindow):
         self._garantir_projeto(texto[:60])
         parte = self.painel_chat.referencia
         self.painel_chat.limpar_referencia()
+        self._enviar_pedido(texto, parte)
+
+    def _enviar_pedido(self, texto: str, parte: str | None) -> None:
         self.painel_chat.adicionar("usuario", f"Sobre a parte {parte}: {texto}" if parte else texto)
         self.orquestrador.preparar_operacao()
         self._definir_ocupado(True)
@@ -456,6 +621,59 @@ class JanelaPrincipal(QMainWindow):
             self._pedir_parte.emit(texto, parte)
         else:
             self._pedir_processar.emit(texto)
+
+    def _refazer_pedido(self, numero: int, texto_novo: str | None) -> None:
+        """Editar ou enviar de novo: a conversa volta a esse pedido, e o que veio depois sai dela."""
+        if self.ocupado or self.orquestrador is None:
+            return
+        pedidos = self.projeto.pedidos()
+        if numero >= len(pedidos):
+            self.painel_chat.adicionar_evento("Esta mensagem não está salva no projeto, então não dá para refazê-la.")
+            return
+        conceito = None
+        if texto_novo is None and pedidos[numero].get("imagem"):
+            conceito = self.projeto.conceito_escolhido()
+            if not conceito or conceito["imagem"] != pedidos[numero]["imagem"]:
+                QMessageBox.information(self, "Enviar de novo", "Este não é mais o conceito escolhido. Para refazer, envie a imagem de referência de novo.")
+                return
+        seguintes = len(pedidos) - numero - 1
+        if seguintes and not self._confirmar_volta(seguintes):
+            return
+        antes = self.orquestrador.versao_atual
+        pedido = self.orquestrador.voltar_ao_pedido(numero)
+        depois = self.orquestrador.versao_atual
+        self.painel_chat.remover_desde(numero)
+        self.painel_versoes.atualizar_versoes(self.projeto, depois)
+        if depois != antes:
+            self.painel_chat.adicionar_evento(f"A peça voltou para a versão {depois}." if depois else "A peça voltou para antes da primeira versão.")
+        if depois != self.versao_vista:
+            self._ver_versao(depois)
+        if numero == 0 and texto_novo is not None and self.orquestrador.especificacao is None:
+            # O título ainda é o começo do primeiro pedido: acompanha a edição.
+            self.projeto.titulo_automatico(texto_novo[:60])
+            self.projeto.salvar_estado()
+            self.rotulo_projeto.setText(self.projeto.titulo)
+            self._recarregar_projetos()
+        if conceito:
+            self._seguir_com_conceito(conceito)
+            return
+        texto = texto_novo if texto_novo is not None else pedido["texto"]
+        de_parte = PEDIDO_DE_PARTE.match(texto)
+        if de_parte:
+            self._enviar_pedido(de_parte.group(2), de_parte.group(1))
+        else:
+            self._enviar_pedido(texto, None)
+
+    def _confirmar_volta(self, seguintes: int) -> bool:
+        plural = "o pedido seguinte sai" if seguintes == 1 else f"os {seguintes} pedidos seguintes saem"
+        resposta = QMessageBox.question(
+            self,
+            "Voltar a conversa",
+            f"A conversa volta a esta mensagem: {plural} da conversa, com as respostas. As versões da peça continuam salvas.\n\nContinuar?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return resposta == QMessageBox.StandardButton.Yes
 
     def _escolher_imagem(self) -> None:
         caminho, _ = QFileDialog.getOpenFileName(self, "Imagem de referência", str(Path.home() / "Pictures"), "Imagens (*.png *.jpg *.jpeg *.webp)")
@@ -698,6 +916,7 @@ class JanelaPrincipal(QMainWindow):
             self._verificar_endpoint()
 
     def closeEvent(self, evento) -> None:  # noqa: ANN001, N802 - nome definido pelo Qt.
+        self.painel_chat.parar_leitura()
         if self.orquestrador is not None:
             self.orquestrador.cancelar()
         self._linha.quit()

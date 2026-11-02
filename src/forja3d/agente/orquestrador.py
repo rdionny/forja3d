@@ -71,6 +71,21 @@ def _sem_imagens(mensagens: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return limpas
 
 
+def _e_a_mensagem_do_pedido(mensagem: dict[str, Any], texto: str) -> bool:
+    """A conversa guarda o que o usuário viu. O conceito e a parte vão para o modelo em outro formato."""
+    conteudo = mensagem.get("content")
+    if mensagem["role"] != "user" or not isinstance(conteudo, str):
+        return False
+    if conteudo == texto:
+        return True
+    if texto.startswith("Escolhi o conceito: "):
+        return conteudo.startswith("[CONCEITO ESCOLHIDO]") and f"Opção: {texto.removeprefix('Escolhi o conceito: ')[:-1]}:" in conteudo
+    if texto.startswith("Sobre a parte "):
+        pedido = texto.partition(": ")[2]
+        return conteudo == pedido or (conteudo.startswith("[PARTE SELECIONADA]") and conteudo.endswith(f"Pedido: {pedido}"))
+    return False
+
+
 def _parte_imagem(caminho: Path) -> dict[str, Any]:
     dados = base64.b64encode(caminho.read_bytes()).decode()
     return {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{dados}"}}
@@ -137,11 +152,7 @@ class Orquestrador:
     def restaurar_versao(self, versao: str) -> None:
         if versao not in self.projeto.versoes():
             raise ValueError(f"Versão desconhecida: {versao}")
-        self.versao_atual = versao
-        self.versao_aprovada = None
-        self.resultado_verificacao = self.projeto.verificacao(versao)
-        dados = self.projeto.especificacao(versao)
-        self.especificacao = Especificacao.model_validate(dados) if dados else None
+        self._ir_para_versao(versao)
         codigo = (self.projeto.pasta_versao(versao) / "modelo.py").read_text(encoding="utf-8")
         self.mensagens.append(
             {
@@ -151,24 +162,73 @@ class Orquestrador:
         )
         self._salvar_estado()
 
+    def _ir_para_versao(self, versao: str | None) -> None:
+        self.versao_atual = versao
+        self.versao_aprovada = None
+        self.resultado_verificacao = self.projeto.verificacao(versao) if versao else None
+        dados = self.projeto.especificacao(versao) if versao else None
+        self.especificacao = Especificacao.model_validate(dados) if dados else None
+        self._versao_sem_verificar = False
+
+    def verificar_versao_atual(self) -> None:
+        """Uma versão sem verificação, como a que vem de um arquivo, passa pelo mesmo crivo de uma nova."""
+        self._verificar({})
+
+    def voltar_ao_pedido(self, numero: int) -> dict[str, Any]:
+        """Tira da conversa esse pedido e tudo o que veio depois, e devolve o registro dele.
+
+        A peça volta para a versão daquele momento. As versões mais novas continuam salvas.
+        """
+        conversa = self.projeto.ler_conversa()
+        posicoes = [i for i, r in enumerate(conversa) if r["papel"] == "usuario"]
+        pedidos = [conversa[i] for i in posicoes]
+        pedido = pedidos[numero]
+        self.projeto.arquivar_conversa()
+        inicio = pedido["indice"] if "indice" in pedido else self._indice_sem_marco(pedidos, numero)
+        self.mensagens = self.mensagens[:inicio]
+        versao = pedido["versao"] if "versao" in pedido else self.projeto.versao_em(pedido["em"])
+        aprovada = self.versao_aprovada if versao == self.versao_atual else None
+        self._ir_para_versao(versao)
+        self.versao_aprovada = aprovada
+        self.projeto.reescrever_conversa(conversa[: posicoes[numero]])
+        self._salvar_historico()
+        self._salvar_estado()
+        return pedido
+
+    def _indice_sem_marco(self, pedidos: list[dict[str, Any]], numero: int) -> int:
+        """Conversas antigas não guardam onde cada pedido começa: procura pelo texto, na ordem."""
+        cursor = 1
+        for posicao, pedido in enumerate(pedidos):
+            achado = next((i for i in range(cursor, len(self.mensagens)) if _e_a_mensagem_do_pedido(self.mensagens[i], pedido["texto"])), None)
+            if achado is None:
+                continue
+            cursor = achado + 1
+            if posicao >= numero:
+                return achado
+        return len(self.mensagens)
+
+    def _registrar_pedido(self, texto: str, imagem: str | None = None) -> None:
+        # O marco diz onde este pedido começa, para a conversa poder voltar até ele.
+        self.projeto.registrar_conversa("usuario", texto, imagem, indice=len(self.mensagens), versao=self.versao_atual)
+
     def processar(self, texto: str) -> str:
         """Atende a um pedido do usuário e devolve a resposta final.
 
         Não limpa o cancelamento aqui: um clique em Cancelar logo depois de enviar chega antes
         de esta thread começar. Quem inicia a operação chama `preparar_operacao` antes.
         """
-        self.projeto.registrar_conversa("usuario", texto)
+        self._registrar_pedido(texto)
         return self._atender(texto)
 
     def processar_conceito(self, conceito: dict[str, Any]) -> str:
         """Segue a partir do conceito que o usuário escolheu no diálogo de imagem de referência."""
-        self.projeto.registrar_conversa("usuario", f"Escolhi o conceito: {conceito['opcao']['titulo']}.", conceito["imagem"])
+        self._registrar_pedido(f"Escolhi o conceito: {conceito['opcao']['titulo']}.", conceito["imagem"])
         self.mensagens = _sem_imagens(self.mensagens)
         return self._atender(mensagem_do_conceito(conceito))
 
     def processar_parte(self, texto: str, parte: str) -> str:
         """Atende a um pedido sobre uma parte que o usuário selecionou na mesa."""
-        self.projeto.registrar_conversa("usuario", f"Sobre a parte {parte}: {texto}")
+        self._registrar_pedido(f"Sobre a parte {parte}: {texto}")
         medidas = self.projeto.medidas(self.versao_atual) if self.versao_atual else []
         dados = next((p for p in medidas if p["nome"] == parte), None)
         if dados is None:
@@ -343,7 +403,7 @@ class Orquestrador:
             return {"ok": False, "problemas": problemas}, []
         self.especificacao = especificacao
         self.resultado_verificacao = None
-        self.projeto.estado["titulo"] = _titulo(especificacao.nome)
+        self.projeto.titulo_automatico(_titulo(especificacao.nome))
         self._salvar_estado()
         self.ouvinte.especificacao(especificacao.model_dump())
         self._proxima = "modelagem"
