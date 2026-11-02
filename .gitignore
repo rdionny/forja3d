@@ -1,0 +1,24 @@
+# As barras no início prendem a regra à raiz. Sem elas, /projetos/ também
+# ignoraria o código em src/forja3d/projetos/.
+
+# Ambiente e ferramentas
+/.venv/
+/ferramentas/
+
+# Segredos e dados locais
+/config/ia.json
+/config/calibracao.json
+/docs/PROMPT_DESENVOLVIMENTO.md
+
+# Gerados pelo app
+/saida/
+/projetos/
+/logs/
+
+# Cache e empacotamento
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+/build/
+/dist/
+*.egg-info/

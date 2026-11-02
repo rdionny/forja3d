@@ -1,0 +1,236 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "definir_especificacao",
+      "description": "Registra os requisitos da peça na orientação de impressão, antes de modelar. Devolve problemas encontrados contra os limites da impressora.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string",
+            "description": "Identificador em snake_case, sem acentos"
+          },
+          "finalidade": {
+            "type": "string"
+          },
+          "material": {
+            "type": "string",
+            "enum": [
+              "PLA",
+              "PETG",
+              "TPU"
+            ]
+          },
+          "carga": {
+            "type": "string",
+            "enum": [
+              "nenhuma",
+              "leve",
+              "media",
+              "alta"
+            ]
+          },
+          "ambiente": {
+            "type": "string"
+          },
+          "dimensoes": {
+            "type": "object",
+            "description": "Caixa envolvente total em mm, na orientação de impressão. Em peça múltipla, use a maior parte.",
+            "properties": {
+              "x_mm": {
+                "type": "number"
+              },
+              "y_mm": {
+                "type": "number"
+              },
+              "z_mm": {
+                "type": "number"
+              },
+              "tolerancia_mm": {
+                "type": "number",
+                "description": "Padrão 0.2"
+              }
+            },
+            "required": [
+              "x_mm",
+              "y_mm",
+              "z_mm"
+            ]
+          },
+          "pecas": {
+            "type": "integer",
+            "description": "Número de sólidos separados"
+          },
+          "furos": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "quantidade": {
+                  "type": "integer"
+                },
+                "diametro_nominal_mm": {
+                  "type": "number"
+                },
+                "diametro_modelado_mm": {
+                  "type": "number",
+                  "description": "Diâmetro com a compensação aplicada"
+                },
+                "eixo": {
+                  "type": "string",
+                  "enum": [
+                    "X",
+                    "Y",
+                    "Z"
+                  ]
+                },
+                "passante": {
+                  "type": "boolean"
+                },
+                "uso": {
+                  "type": "string",
+                  "description": "Exemplo: folga M4, autoatarraxante M3, rolamento 608"
+                }
+              },
+              "required": [
+                "quantidade",
+                "diametro_nominal_mm",
+                "diametro_modelado_mm",
+                "eixo",
+                "passante"
+              ]
+            }
+          },
+          "caracteristicas": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "espessura_minima_mm": {
+            "type": "number"
+          },
+          "orientacao_impressao": {
+            "type": "string"
+          },
+          "premissas": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "nome",
+          "finalidade",
+          "material",
+          "carga",
+          "dimensoes",
+          "pecas",
+          "furos",
+          "orientacao_impressao",
+          "premissas"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "executar_cad",
+      "description": "Executa um script CadQuery completo em ambiente restrito e salva uma nova versão. Devolve medidas ou o erro.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "codigo": {
+            "type": "string",
+            "description": "Script Python completo, com a variável result"
+          },
+          "resumo_alteracao": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "codigo",
+          "resumo_alteracao"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "verificar_peca",
+      "description": "Compara a versão atual com a especificação e com as regras de impressão. Devolve bloqueios, alertas e medidas.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "renderizar_vistas",
+      "description": "Gera duas vistas isométricas de cantos opostos e as vistas frontal, lateral, superior e inferior da versão atual. As imagens chegam na mensagem seguinte.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "fatiar_peca",
+      "description": "Fatia a versão atual com o OrcaSlicer e valida o G-code. Só funciona após a aprovação do usuário.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "material": {
+            "type": "string",
+            "enum": [
+              "PLA",
+              "PETG",
+              "TPU"
+            ]
+          },
+          "qualidade": {
+            "type": "string",
+            "enum": [
+              "fina",
+              "otima",
+              "padrao",
+              "rascunho"
+            ]
+          },
+          "paredes": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 8
+          },
+          "preenchimento_pct": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "suporte": {
+            "type": "boolean"
+          },
+          "brim": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "material",
+          "qualidade",
+          "paredes",
+          "preenchimento_pct",
+          "suporte",
+          "brim"
+        ]
+      }
+    }
+  }
+]

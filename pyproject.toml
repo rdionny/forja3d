@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=65"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forja3d"
+version = "0.1.0"
+description = "Agente de IA que projeta e fatia peças para a Creality Ender-3 V3 SE"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "cadquery==2.8.0",
+    "manifold3d==3.5.4",
+    "openai==3.42.1",
+    "pillow==13.0.0",
+    "pydantic==2.14.2",
+    "PySide6_Essentials==6.12.0",
+    "pyvista==0.49.2",
+    "pyvistaqt==0.13.1",
+    "trimesh==5.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pyinstaller==6.22.3",
+    "pytest==9.2.0",
+    "pytest-qt==4.5.0",
+    "ruff==0.17.3",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+forja3d = ["ia/prompts/*.md", "agente/*.json", "interface/icones/*.svg"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["src", "tests", "scripts"]
+extend-exclude = ["tests/dados", "ferramentas", "projetos", "saida"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+qt_api = "pyside6"

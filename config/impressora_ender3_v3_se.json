@@ -1,0 +1,162 @@
+{
+  "id": "creality_ender3_v3_se_0.4",
+  "nome": "Creality Ender-3 V3 SE",
+  "firmware": {
+    "tipo": "marlin2",
+    "versao_referencia": "V1.1.0",
+    "midia": "cartao_sd",
+    "serial_baud": 115200,
+    "sensor_fim_filamento": false
+  },
+  "volume_mm": {
+    "fisico": {
+      "x": 220,
+      "y": 220,
+      "z": 250
+    },
+    "seguro": {
+      "x": 210,
+      "y": 210,
+      "z": 239
+    },
+    "maximo_fatiador_xy": 217,
+    "margem_lateral": 5,
+    "elevacao_final_z": 10.2
+  },
+  "bico": {
+    "diametro_mm": 0.4,
+    "material": "latao",
+    "temp_max_c": 260,
+    "temp_alerta_c": 250
+  },
+  "mesa": {
+    "temp_max_c": 100,
+    "movimento": "Y"
+  },
+  "filamento_diametro_mm": 1.75,
+  "camada_mm": {
+    "min": 0.1,
+    "max": 0.32
+  },
+  "movimento": {
+    "vel_max_xy_mm_s": 250,
+    "vel_max_z_mm_s": 5,
+    "vel_max_e_mm_s": 40,
+    "acel_max_xy_mm_s2": 2500,
+    "acel_max_z_mm_s2": 500,
+    "acel_extrusao_mm_s2": 2500,
+    "acel_retracao_mm_s2": 500,
+    "jerk_xy": 10,
+    "jerk_z": 0.4,
+    "jerk_e": 5
+  },
+  "retracao": {
+    "comprimento_mm": 1.2,
+    "vel_mm_s": 40,
+    "retorno_mm_s": 30,
+    "z_hop_mm": 0.4,
+    "z_hop_tipo": "Spiral Lift"
+  },
+  "materiais": {
+    "PLA": {
+      "bico_c": 220,
+      "bico_min_c": 190,
+      "bico_max_c": 230,
+      "mesa_c": 55,
+      "ventoinha_min_pct": 100,
+      "ventoinha_max_pct": 100,
+      "camadas_sem_ventoinha": 1,
+      "fluxo": 0.98,
+      "vazao_max_mm3_s": 18,
+      "densidade_g_cm3": 1.24,
+      "retracao_mm": 1.2,
+      "balanco_max_graus": 45,
+      "ponte_max_mm": 25
+    },
+    "PETG": {
+      "bico_c": 250,
+      "bico_min_c": 220,
+      "bico_max_c": 260,
+      "mesa_c": 70,
+      "ventoinha_min_pct": 40,
+      "ventoinha_max_pct": 90,
+      "camadas_sem_ventoinha": 3,
+      "fluxo": 0.95,
+      "vazao_max_mm3_s": 9,
+      "densidade_g_cm3": 1.27,
+      "retracao_mm": 1.2,
+      "balanco_max_graus": 45,
+      "ponte_max_mm": 15
+    },
+    "TPU": {
+      "bico_c": 230,
+      "bico_min_c": 200,
+      "bico_max_c": 250,
+      "mesa_c": 30,
+      "ventoinha_min_pct": 100,
+      "ventoinha_max_pct": 100,
+      "camadas_sem_ventoinha": 1,
+      "fluxo": 1.0,
+      "vazao_max_mm3_s": 3.5,
+      "densidade_g_cm3": 1.24,
+      "retracao_mm": 0.4,
+      "balanco_max_graus": 30,
+      "ponte_max_mm": 0
+    }
+  },
+  "qualidades": {
+    "fina": {
+      "camada_mm": 0.12,
+      "preset_orca": "0.12mm Fine @Creality Ender3V3SE 0.4"
+    },
+    "otima": {
+      "camada_mm": 0.16,
+      "preset_orca": "0.16mm Optimal @Creality Ender3V3SE 0.4"
+    },
+    "padrao": {
+      "camada_mm": 0.2,
+      "preset_orca": "0.20mm Standard @Creality Ender3V3SE 0.4"
+    },
+    "rascunho": {
+      "camada_mm": 0.24,
+      "preset_orca": "0.24mm Draft @Creality Ender3V3SE 0.4"
+    }
+  },
+  "processo_padrao": {
+    "paredes": 2,
+    "camadas_topo": 4,
+    "camadas_base": 4,
+    "preenchimento_pct": 15,
+    "padrao_preenchimento": "crosshatch",
+    "vel_primeira_camada_mm_s": 30,
+    "vel_parede_externa_mm_s": 60,
+    "vel_parede_interna_mm_s": 90,
+    "vel_preenchimento_mm_s": 180,
+    "vel_viagem_mm_s": 150,
+    "acel_primeira_camada_mm_s2": 500,
+    "acel_parede_externa_mm_s2": 1000,
+    "acel_parede_interna_mm_s2": 2000,
+    "largura_linha_mm": 0.46,
+    "largura_parede_externa_mm": 0.42,
+    "brim_mm": 5
+  },
+  "validacao_gcode": {
+    "x_min_bloco_inicial": -2.4,
+    "x_min": 0,
+    "x_max": 220,
+    "y_min": 0,
+    "y_max": 220,
+    "z_min": 0,
+    "z_max": 250
+  },
+  "orca": {
+    "versao": "2.4.2",
+    "pasta_presets": "config/orca",
+    "maquina": "Creality Ender-3 V3 SE 0.4 nozzle",
+    "filamentos": {
+      "PLA": "Creality Generic PLA @Ender-3V3-all",
+      "PETG": "Creality Generic PETG @Ender-3V3-all",
+      "TPU": "Creality Generic TPU @Ender-3V3-all"
+    }
+  }
+}
