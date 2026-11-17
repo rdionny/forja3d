@@ -64,9 +64,9 @@ def resultados_das_ferramentas(mensagens):
     return [json.loads(m["content"]) for m in mensagens if m.get("role") == "tool"]
 
 
-def test_ferramentas_sao_exatamente_as_cinco_e_nenhuma_exporta():
+def test_ferramentas_sao_exatamente_as_seis_e_nenhuma_exporta():
     nomes = {d["function"]["name"] for d in DEFINICOES}
-    assert nomes == {"definir_especificacao", "executar_cad", "verificar_peca", "renderizar_vistas", "fatiar_peca"}
+    assert nomes == {"definir_especificacao", "executar_cad", "verificar_peca", "renderizar_vistas", "definir_cores", "fatiar_peca"}
 
 
 def test_resposta_simples_sem_ferramentas(config, perfil):

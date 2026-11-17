@@ -106,19 +106,41 @@ def _espessuras(malha: trimesh.Trimesh) -> np.ndarray:
     return resultado[np.isfinite(resultado)]
 
 
-def analisar_malha(caminho: Path, balanco_max_graus: float) -> dict[str, Any]:
+def _carregar(caminho: Path) -> trimesh.Trimesh:
     malha = trimesh.load_mesh(caminho, force="mesh")
+    # O CAD deixa triângulos de área zero, como nos polos de uma esfera. Eles não são buraco, e contá-los fazia uma peça fechada parecer aberta.
+    malha.update_faces(malha.nondegenerate_faces())
+    return malha
+
+
+def _regioes(malha: trimesh.Trimesh, balanco_max_graus: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """As faces da base, em balanço e de teto, na posição em que a malha está."""
     normais = malha.face_normals
-    areas = malha.area_faces
     centros = malha.triangles_center
     zmin = float(malha.bounds[0, 2])
-
     na_base = (np.abs(centros[:, 2] - zmin) < TOLERANCIA_BASE) & (normais[:, 2] < -0.999)
     longe_da_base = centros[:, 2] > zmin + ALTURA_ZONA_DA_BASE
     # 0° é uma parede vertical e 90° é um teto.
     inclinacao = np.degrees(np.arcsin(np.clip(-normais[:, 2], -1.0, 1.0)))
     balanco = longe_da_base & (inclinacao > balanco_max_graus + 1) & (inclinacao < 85)
     teto = ~na_base & (centros[:, 2] > zmin + TOLERANCIA_BASE) & (inclinacao >= 85)
+    return na_base, balanco, teto
+
+
+def analisar_posicao(caminho: Path, tombo: list[float], balanco_max_graus: float) -> dict[str, float]:
+    """Quanto a peça deitada encosta na mesa e quanto fica no ar. Rápida o bastante para rodar logo depois de tombar."""
+    malha = _carregar(caminho)
+    rotacao = np.eye(4)
+    rotacao[:3, :3] = np.reshape(tombo, (3, 3))
+    malha.apply_transform(rotacao)
+    na_base, balanco, _ = _regioes(malha, balanco_max_graus)
+    return {"area_base_mm2": round(float(malha.area_faces[na_base].sum()), 2), "area_balanco_mm2": round(float(malha.area_faces[balanco].sum()), 2)}
+
+
+def analisar_malha(caminho: Path, balanco_max_graus: float) -> dict[str, Any]:
+    malha = _carregar(caminho)
+    areas = malha.area_faces
+    na_base, balanco, teto = _regioes(malha, balanco_max_graus)
 
     espessuras = _espessuras(malha) if malha.is_watertight else np.array([])
     return {

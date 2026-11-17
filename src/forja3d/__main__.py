@@ -2,9 +2,37 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
+import os
 import sys
+import traceback
 from pathlib import Path
+
+
+def _garantir_saidas() -> None:
+    """Sem console, o programa empacotado não tem stdout nem stderr, e há biblioteca que escreve neles sem conferir."""
+    for nome in ("stdout", "stderr"):
+        if getattr(sys, nome) is None:
+            setattr(sys, nome, open(os.devnull, "w", encoding="utf-8"))  # noqa: SIM115 - vale até o fim do processo.
+
+
+def _abrir_o_app(arquivo: Path | None = None) -> int:
+    """Sem console, uma falha antes de a janela existir sumiria sem nenhum aviso."""
+    try:
+        from forja3d.interface.aplicativo import executar
+
+        return executar(arquivo)
+    except Exception:  # noqa: BLE001 - qualquer falha precisa chegar a quem abriu o programa.
+        from forja3d.configuracao import pasta_usuario
+
+        destino = pasta_usuario() / "logs" / "falha_ao_abrir.txt"
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        destino.write_text(traceback.format_exc(), encoding="utf-8")
+        if os.name == "nt":
+            icone_de_erro = 0x10
+            ctypes.windll.user32.MessageBoxW(None, f"O Forja3D não conseguiu abrir.\n\nOs detalhes estão em:\n{destino}", "Forja3D", icone_de_erro)
+        return 1
 
 
 def _comando_verificar(script: str, especificacao: str) -> int:
@@ -62,7 +90,12 @@ def _comando_agente(pedido: str, material: str | None) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _garantir_saidas()
     argumentos = sys.argv[1:] if argv is None else argv
+    if argumentos[:1] == ["--mcp"]:
+        from forja3d.mcp.servidor import principal
+
+        return principal()
     if argumentos[:1] == ["--worker-cad"]:
         from forja3d.cad.worker import principal
 
@@ -71,6 +104,13 @@ def main(argv: list[str] | None = None) -> int:
         from forja3d.render.vistas import principal
 
         return principal(*argumentos[1:])
+    if argumentos[:1] == ["--worker-importar"]:
+        from forja3d.importacao.preparo import principal
+
+        return principal(*argumentos[1:])
+    # Dois cliques em um arquivo: o Windows passa só o caminho dele.
+    if len(argumentos) == 1 and argumentos[0].lower().endswith(".forja3d"):
+        return _abrir_o_app(Path(argumentos[0]).resolve())
 
     analisador = argparse.ArgumentParser(prog="forja3d")
     comandos = analisador.add_subparsers(dest="comando")
@@ -87,9 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     if dados.comando == "agente":
         return _comando_agente(dados.pedido, dados.fatiar)
 
-    from forja3d.interface.aplicativo import executar
-
-    return executar()
+    return _abrir_o_app()
 
 
 if __name__ == "__main__":

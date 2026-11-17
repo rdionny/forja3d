@@ -87,3 +87,9 @@ class PainelChecks(QWidget):
             self._adicionar("alerta", f"G-code: {item['mensagem']}")
         if validacao["aprovado"]:
             self._adicionar("ok", "G-code aprovado: movimentos na mesa, temperaturas e comandos conferem.")
+
+    def mostrar_roteiro(self, roteiro: str) -> None:
+        """As trocas de filamento, na ordem em que vão acontecer."""
+        for bloco in roteiro.split("\n\n"):
+            if bloco:
+                self._adicionar("info", bloco)

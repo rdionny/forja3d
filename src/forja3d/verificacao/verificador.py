@@ -9,15 +9,17 @@ from pathlib import Path
 from typing import Any
 
 from forja3d.agente.especificacao import Especificacao
-from forja3d.verificacao.geometria import analisar_malha
+from forja3d.verificacao.geometria import analisar_malha, analisar_posicao
 
 BLOQUEIO, ALERTA, INFO = "BLOQUEIO", "ALERTA", "INFO"
 EIXOS = {"X": [1.0, 0.0, 0.0], "Y": [0.0, 1.0, 0.0], "Z": [0.0, 0.0, 1.0]}
 TOLERANCIA_DIAMETRO = 0.05
 AREA_MINIMA_DE_BALANCO = 25.0
 AREA_MINIMA_DE_BASE = 400.0
+AREA_QUASE_SEM_APOIO = 5.0
 FRACAO_FINA_ALERTA = 0.01
 FRACAO_FINA_BLOQUEIO = 0.10
+MATERIAL_SEM_ESPECIFICACAO = "PLA"
 
 
 def _item(codigo: str, severidade: str, mensagem: str, parte: str | None = None, **valores: Any) -> dict[str, Any]:
@@ -97,11 +99,19 @@ def _regras_da_parte(parte: dict[str, Any], analise: dict[str, Any], material: d
     maximo_xy = volume["maximo_fatiador_xy"]
     seguro = volume["seguro"]
     x, y, z = parte["tamanho"]
+    # Um modelo baixado não tem script para corrigir: o que não impede de imprimir vira aviso, e a decisão é do usuário.
+    importada = bool(parte.get("importada"))
     itens = []
     if not parte["valido"]:
         itens.append(_item("SOLIDO_INVALIDO", BLOQUEIO, "O sólido é inválido no kernel CAD.", nome))
-    if not analise["fechada"]:
-        itens.append(_item("MALHA_ABERTA", BLOQUEIO, "A malha não é fechada. O fatiador pode gerar defeitos.", nome))
+    # Corpos de cores diferentes encostam: juntos, a malha parece aberta, e o que importa é cada um estar fechado.
+    if not parte.get("corpos_fechados", analise["fechada"]):
+        if importada:
+            itens.append(_item("MALHA_ABERTA", ALERTA, "O modelo importado tem buracos na malha. O fatiador tenta consertar, mas confira o resultado.", nome))
+        else:
+            itens.append(_item("MALHA_ABERTA", BLOQUEIO, "A malha não é fechada. O fatiador pode gerar defeitos.", nome))
+    if importada and parte["solidos"] > 1 and not parte.get("corpos"):
+        itens.append(_item("CORPOS_SEPARADOS", ALERTA, f"O modelo importado tem {parte['solidos']} corpos separados. O que não encostar em nada sai no ar.", nome, corpos=parte["solidos"]))
     if parte["volume_mm3"] <= 0:
         itens.append(_item("VOLUME_ZERO", BLOQUEIO, "O volume da peça não é positivo.", nome))
     if x > maximo_xy or y > maximo_xy:
@@ -119,7 +129,7 @@ def _regras_da_parte(parte: dict[str, Any], analise: dict[str, Any], material: d
 
     fracao = analise["fracao_parede_fina"]
     if fracao >= FRACAO_FINA_ALERTA:
-        severidade = BLOQUEIO if fracao >= FRACAO_FINA_BLOQUEIO else ALERTA
+        severidade = BLOQUEIO if fracao >= FRACAO_FINA_BLOQUEIO and not importada else ALERTA
         itens.append(_item("PAREDE_FINA", severidade, f"Cerca de {fracao:.0%} da superfície está em paredes abaixo de 0,9 mm.", nome, fracao=fracao))
     if analise["area_balanco_mm2"] >= AREA_MINIMA_DE_BALANCO:
         limite = material["balanco_max_graus"]
@@ -134,8 +144,24 @@ def _regras_da_parte(parte: dict[str, Any], analise: dict[str, Any], material: d
     return itens
 
 
-def verificar_peca(partes: list[dict[str, Any]], especificacao: Especificacao, perfil: dict[str, Any], pasta: Path) -> dict[str, Any]:
-    material = perfil["materiais"][especificacao.material]
+def avisos_da_posicao(stl: Path, tombo: list[float], parte: str, perfil: dict[str, Any]) -> list[dict[str, Any]]:
+    """O que muda com a peça deitada na mesa. O resto da verificação vale para a posição em que ela foi modelada."""
+    limite = perfil["materiais"][MATERIAL_SEM_ESPECIFICACAO]["balanco_max_graus"]
+    analise = analisar_posicao(stl, tombo, limite)
+    base, balanco = analise["area_base_mm2"], analise["area_balanco_mm2"]
+    itens = []
+    if base < AREA_QUASE_SEM_APOIO:
+        itens.append(_item("SEM_APOIO", ALERTA, f"{parte}, nessa posição, encosta na mesa só em uma aresta ou ponta e pode se soltar. Marque Suporte, ou deite a 90°.", parte, area=base))
+    elif base < AREA_MINIMA_DE_BASE:
+        itens.append(_item("BASE_PEQUENA", ALERTA, f"{parte}, nessa posição, encosta só {base:g} mm² na mesa. Abaixo de {AREA_MINIMA_DE_BASE:.0f} mm², use brim.", parte, area=base))
+    if balanco >= AREA_MINIMA_DE_BALANCO:
+        itens.append(_item("BALANCO", ALERTA, f"{parte}, nessa posição, fica com {balanco:g} mm² em balanço acima de {limite}°. Marque Suporte.", parte, area=balanco))
+    return itens
+
+
+def verificar_peca(partes: list[dict[str, Any]], especificacao: Especificacao | None, perfil: dict[str, Any], pasta: Path) -> dict[str, Any]:
+    """Sem especificação, a peça só tem modelos importados, e valem só as regras de impressão."""
+    material = perfil["materiais"][especificacao.material if especificacao else MATERIAL_SEM_ESPECIFICACAO]
     itens: list[dict[str, Any]] = []
     analises = {}
     for parte in partes:
@@ -143,11 +169,14 @@ def verificar_peca(partes: list[dict[str, Any]], especificacao: Especificacao, p
         analises[parte["nome"]] = analise
         itens += _regras_da_parte(parte, analise, material, perfil)
 
-    solidos = sum(p["solidos"] for p in partes)
-    if solidos != especificacao.pecas:
-        itens.append(_item("QTD_SOLIDOS", BLOQUEIO, f"A especificação pede {especificacao.pecas} sólido(s), e o modelo tem {solidos}.", esperado=especificacao.pecas, medido=solidos))
-    itens += _comparar_tamanho(partes, especificacao)
-    itens += _comparar_furos(partes, especificacao)
+    # A especificação descreve o que o agente modela. Modelo baixado fica fora da comparação.
+    desenhadas = [p for p in partes if not p.get("importada")]
+    if especificacao is not None and desenhadas:
+        solidos = sum(p["solidos"] for p in desenhadas)
+        if solidos != especificacao.pecas:
+            itens.append(_item("QTD_SOLIDOS", BLOQUEIO, f"A especificação pede {especificacao.pecas} sólido(s), e o modelo tem {solidos}.", esperado=especificacao.pecas, medido=solidos))
+        itens += _comparar_tamanho(desenhadas, especificacao)
+        itens += _comparar_furos(desenhadas, especificacao)
 
     bloqueios = [i for i in itens if i["severidade"] == BLOQUEIO]
     alertas = [i for i in itens if i["severidade"] == ALERTA]

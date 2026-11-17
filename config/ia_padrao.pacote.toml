@@ -1,0 +1,19 @@
+# Padrões do app instalado. Endpoint, chave e modelo ficam vazios: cada pessoa informa os seus no primeiro uso.
+[ia]
+endpoint = ""
+api_key = ""
+modelo = ""
+timeout_s = 240
+max_tentativas_rede = 2
+temperatura = 0.2
+
+[ia.esforco]
+conversa = "low"
+especificacao = "low"
+modelagem = "high"
+reparo = "high"
+critica_visual = "low"
+
+[agente]
+max_chamadas_por_pedido = 25
+max_reparos_mesmo_erro = 3

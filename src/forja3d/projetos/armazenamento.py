@@ -34,6 +34,14 @@ def ler_json(caminho: Path, padrao: Any = None) -> Any:
     return json.loads(caminho.read_text(encoding="utf-8"))
 
 
+def ligar_ou_copiar(origem: Path, destino: Path) -> None:
+    """Um modelo importado pode ter dezenas de MB e se repete em toda versão. O link não ocupa o disco de novo."""
+    try:
+        os.link(origem, destino)
+    except OSError:
+        shutil.copyfile(origem, destino)
+
+
 class Projeto:
     def __init__(self, pasta: Path) -> None:
         self.pasta = pasta
@@ -148,11 +156,14 @@ class Projeto:
     def stls_por_parte(self, versao: str) -> dict[str, Path]:
         return {p["nome"]: self.pasta_versao(versao) / p["stl"] for p in self.medidas(versao)}
 
+    def medidas_por_parte(self, versao: str) -> dict[str, dict[str, Any]]:
+        return {p["nome"]: p for p in self.medidas(versao)}
+
     def tem_layout(self, versao: str) -> bool:
         return (self.pasta_versao(versao) / "layout.json").exists()
 
     def layout(self, versao: str, perfil: dict[str, Any]) -> LayoutMesa:
-        tamanhos = {p["nome"]: (float(p["tamanho"][0]), float(p["tamanho"][1])) for p in self.medidas(versao)}
+        tamanhos = {p["nome"]: tuple(float(v) for v in p["tamanho"][:3]) for p in self.medidas(versao)}
         dados = ler_json(self.pasta_versao(versao) / "layout.json")
         if dados is None:
             return LayoutMesa.novo(tamanhos, perfil)

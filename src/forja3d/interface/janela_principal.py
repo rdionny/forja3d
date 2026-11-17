@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import Any
 from PySide6.QtCore import QEvent, QFile, QObject, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QIcon, QKeySequence
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -31,6 +33,14 @@ from PySide6.QtWidgets import (
 from forja3d import configuracao
 from forja3d.conceitos.referencia import ReferenciaInvalida, preparar_referencia
 from forja3d.configuracao import Configuracao
+from forja3d.fatiamento.cores import (
+    COMO_TROCAR,
+    LIMITE_DE_TROCAS_SEM_AVISO,
+    ErroDeCor,
+    estimar_trocas,
+    nome_da_cor,
+    roteiro_da_preparacao,
+)
 from forja3d.fatiamento.exportacao import (
     ExportacaoBloqueada,
     destinos_dos_arquivos,
@@ -40,11 +50,15 @@ from forja3d.fatiamento.exportacao import (
     unidades_removiveis,
 )
 from forja3d.fatiamento.orca import ParametrosFatiamento, localizar_orca
-from forja3d.fatiamento.tempo import AVISO_DA_ESTIMATIVA, texto_da_previsao
+from forja3d.fatiamento.simulacao import Percurso
+from forja3d.fatiamento.tempo import AVISO_DA_ESTIMATIVA, segundos_do_tempo, texto_da_previsao
 from forja3d.ia.cliente import ClienteIA, ErroIA
+from forja3d.importacao.leitura import FORMATOS_ACEITOS, FORMATOS_RECUSADOS
+from forja3d.importacao.preparo import ModeloLido
 from forja3d.interface import tema
 from forja3d.interface.dialogo_conceitos import DialogoConceitos
 from forja3d.interface.dialogo_config import DialogoConfig
+from forja3d.interface.dialogo_importar import DialogoImportar
 from forja3d.interface.painel_3d import Painel3D
 from forja3d.interface.painel_chat import PainelChat
 from forja3d.interface.painel_checks import PainelChecks
@@ -53,6 +67,7 @@ from forja3d.interface.trabalhador import Trabalhador
 from forja3d.projetos.armazenamento import Projeto
 from forja3d.projetos.compartilhar import EXTENSAO, com_extensao, nome_do_arquivo
 from forja3d.registro import proteger_chaves
+from forja3d.versao import texto_da_versao
 
 log = logging.getLogger(__name__)
 
@@ -60,7 +75,10 @@ ICONE_CONFIGURACOES = Path(__file__).parent / "icones" / "engrenagem.svg"
 QUALIDADES = (("Padrão, 0,20 mm", "padrao"), ("Ótima, 0,16 mm", "otima"), ("Fina, 0,12 mm", "fina"), ("Rascunho, 0,24 mm", "rascunho"))
 AJUSTES_POR_CARGA = {"nenhuma": (2, 15), "leve": (3, 15), "media": (4, 25), "alta": (5, 40)}
 FILTRO_DE_PROJETO = f"Projeto do Forja3D (*{EXTENSAO})"
+# Os recusados também aparecem: sem eles, a pessoa não veria o arquivo que baixou nem saberia o que fazer com ele.
+FILTRO_DE_MODELO = "Modelos 3D (" + " ".join(f"*{f}" for f in (*FORMATOS_ACEITOS, *FORMATOS_RECUSADOS)) + ")"
 PEDIDO_DE_PARTE = re.compile(r"^Sobre a parte (\S+): (.*)$", re.DOTALL)
+ESPERA_DO_DIALOGO_MS = 1000
 
 
 def mandar_para_a_lixeira(pasta: Path) -> bool:
@@ -71,7 +89,7 @@ def mandar_para_a_lixeira(pasta: Path) -> bool:
 class SemRodaSemFoco(QObject):
     """Passar a roda do mouse por cima não pode trocar uma opção de impressão sem ninguém notar."""
 
-    def eventFilter(self, alvo: QObject, evento: QEvent) -> bool:  # noqa: N802 - nome definido pelo Qt.
+    def eventFilter(self, alvo: QObject, evento: QEvent) -> bool:
         if evento.type() == QEvent.Type.Wheel and not alvo.hasFocus():
             evento.ignore()
             return True
@@ -86,6 +104,11 @@ class JanelaPrincipal(QMainWindow):
     _pedir_verificacao = Signal()
     _pedir_salvar_arquivo = Signal(object, object)
     _pedir_importar_arquivo = Signal(object, object)
+    _pedir_ler_modelo = Signal(object)
+    _pedir_adicionar_modelo = Signal(object, object)
+    _pedir_simulacao = Signal(object, object, object)
+    _pedir_regioes = Signal(str, object)
+    _pedir_separar = Signal(str, object, object, bool)
     _estado_ia = Signal(bool, str)
 
     def __init__(self, config: Configuracao, perfil: dict[str, Any], fabrica_cliente: Callable[..., Any] = ClienteIA, verificar_endpoint: bool = True) -> None:
@@ -97,6 +120,9 @@ class JanelaPrincipal(QMainWindow):
         self.versao_vista: str | None = None
         self.pasta_impressao: Path | None = None
         self._fabrica_cliente = fabrica_cliente
+        self._arquivos_recebidos: list[Path] = []
+        # Um agente de fora, pelo MCP, mudou a peça aberta: ela é relida quando a janela estiver livre.
+        self._peca_mudou_por_fora = False
 
         self.setWindowTitle("Forja3D")
         self.resize(1440, 880)
@@ -154,6 +180,9 @@ class JanelaPrincipal(QMainWindow):
         self.rotulo_orca = QLabel("")
         self.statusBar().addWidget(self.rotulo_ia)
         self.statusBar().addWidget(self.rotulo_orca)
+        # A data diz se a janela aberta já tem a última atualização: a versão só muda de tempos em tempos.
+        self.rotulo_versao = QLabel(texto_da_versao(), objectName="suave")
+        self.statusBar().addPermanentWidget(self.rotulo_versao)
         self.statusBar().setSizeGripEnabled(False)
 
     def _criar_topo(self) -> QWidget:
@@ -193,9 +222,11 @@ class JanelaPrincipal(QMainWindow):
         menu.addSeparator()
         self.acao_abrir = menu.addAction("Abrir arquivo…", self._abrir_arquivo)
         self.acao_abrir.setShortcut(QKeySequence.StandardKey.Open)
+        self.acao_importar = menu.addAction("Importar modelo 3D…", self._importar_modelo)
+        self.acao_importar.setShortcut(QKeySequence("Ctrl+I"))
         self.botao_arquivo.setMenu(menu)
         # Um atalho só vale em uma ação da janela: o menu fica escondido.
-        self.addActions([self.acao_salvar, self.acao_salvar_como, self.acao_abrir])
+        self.addActions([self.acao_salvar, self.acao_salvar_como, self.acao_abrir, self.acao_importar])
         return self.botao_arquivo
 
     def _criar_botao_da_mesa(self, icone: str, dica: str, nome: str, acao: Callable[[], None]) -> QPushButton:
@@ -257,8 +288,11 @@ class JanelaPrincipal(QMainWindow):
         self.rotulo_resumo = QLabel("Gere uma peça para preparar a impressão.", objectName="suave", wordWrap=True)
         self.botao_exportar = QPushButton("Exportar G-code", toolTip="Copia o arquivo validado para o cartão SD")
         self.botao_exportar.clicked.connect(self._exportar)
+        self.botao_simular = QPushButton("Simular", toolTip="Mostra a impressão camada por camada, a partir do G-code preparado")
+        self.botao_simular.clicked.connect(self._simular)
         acoes.addWidget(self.botao_aprovar)
         acoes.addWidget(self.rotulo_resumo, 1)
+        acoes.addWidget(self.botao_simular)
         acoes.addWidget(self.botao_exportar)
         coluna.addLayout(acoes)
         return barra
@@ -282,6 +316,10 @@ class JanelaPrincipal(QMainWindow):
         self.painel_versoes.apagar_pedido.connect(self._apagar_projeto)
         self.painel_versoes.salvar_como_pedido.connect(self._salvar_como)
         self.painel_versoes.abrir_arquivo_pedido.connect(self._abrir_arquivo)
+        self.painel_3d.importar_pedido.connect(self._importar_modelo)
+        self.painel_3d.modelo_solto.connect(self._importar_modelo)
+        self.painel_3d.separacao_pedida.connect(self._ler_regioes)
+        self.painel_3d.separar_pedido.connect(self._separar_cores)
 
         self._pedir_processar.connect(self.trabalhador.processar)
         self._pedir_parte.connect(self.trabalhador.processar_parte)
@@ -290,6 +328,16 @@ class JanelaPrincipal(QMainWindow):
         self._pedir_verificacao.connect(self.trabalhador.verificar)
         self._pedir_salvar_arquivo.connect(self.trabalhador.salvar_arquivo)
         self._pedir_importar_arquivo.connect(self.trabalhador.importar_arquivo)
+        self._pedir_ler_modelo.connect(self.trabalhador.ler_modelo)
+        self._pedir_adicionar_modelo.connect(self.trabalhador.adicionar_modelo)
+        self._pedir_simulacao.connect(self.trabalhador.ler_simulacao)
+        self.trabalhador.simulacao_lida.connect(self._ao_ler_simulacao)
+        self._pedir_regioes.connect(self.trabalhador.ler_regioes)
+        self._pedir_separar.connect(self.trabalhador.separar_cores)
+        self.trabalhador.regioes_lidas.connect(self.painel_3d.iniciar_separacao)
+        self.trabalhador.cores_separadas.connect(self._ao_separar_cores)
+        self.trabalhador.modelo_lido.connect(self._ao_ler_modelo)
+        self.trabalhador.modelo_adicionado.connect(self._ao_adicionar_modelo)
         self.trabalhador.arquivo_salvo.connect(self._ao_salvar_arquivo)
         self.trabalhador.projeto_importado.connect(self._ao_importar_arquivo)
         self.trabalhador.arquivo_falhou.connect(self._ao_falhar_arquivo)
@@ -303,6 +351,7 @@ class JanelaPrincipal(QMainWindow):
         ouvinte.sinal_especificacao.connect(self._ao_especificar)
         ouvinte.sinal_versao.connect(self._ao_criar_versao)
         ouvinte.sinal_verificacao.connect(self._ao_verificar)
+        ouvinte.sinal_cores.connect(self._ao_agente_colorir)
         self._estado_ia.connect(self._mostrar_estado_ia)
 
         for campo in (self.combo_material, self.combo_qualidade):
@@ -316,10 +365,13 @@ class JanelaPrincipal(QMainWindow):
     # ---------- Estado ----------
 
     @property
-    def orquestrador(self):  # noqa: ANN201
+    def orquestrador(self):
         return self.trabalhador.orquestrador
 
     def _definir_ocupado(self, ocupado: bool) -> None:
+        # O que vai acontecer pode mudar a peça: a simulação do G-code anterior não vale mais.
+        if ocupado:
+            self.painel_3d.encerrar_simulacao()
         self.ocupado = ocupado
         self.painel_chat.definir_ocupado(ocupado)
         self.painel_versoes.botao_nova.setEnabled(not ocupado)
@@ -343,9 +395,12 @@ class JanelaPrincipal(QMainWindow):
         self.botao_aprovar.setEnabled(pode_aprovar)
         self.botao_aprovar.setText("Preparar de novo" if liberado else "Aprovar e preparar")
         self.botao_exportar.setEnabled(liberado)
+        self.botao_simular.setEnabled(liberado)
         self.acao_salvar.setEnabled(not self.ocupado and self.projeto is not None)
         self.acao_salvar_como.setEnabled(not self.ocupado and self.projeto is not None)
         self.acao_abrir.setEnabled(not self.ocupado)
+        self.acao_importar.setEnabled(not self.ocupado)
+        self.painel_3d.botao_importar.setEnabled(not self.ocupado)
         # Só a próxima ação fica em destaque.
         for botao, destaque in ((self.botao_aprovar, not liberado), (self.botao_exportar, liberado)):
             botao.setObjectName("primario" if destaque else "")
@@ -385,6 +440,10 @@ class JanelaPrincipal(QMainWindow):
         self.rotulo_orca.setToolTip(str(orca) if orca else "Indique o caminho em Configurações")
 
     def _verificar_endpoint(self) -> None:
+        if not self.config.ia_configurada:
+            self.rotulo_ia.setToolTip("Informe o endpoint, a chave e o modelo em Configurações")
+            self._mostrar_estado_ia(False, "IA: não configurada")
+            return
         self.rotulo_ia.setText("IA: verificando…")
         ia = self.config.ia
         self.rotulo_ia.setToolTip(f"Chat: {ia.provedor}, {ia.modelo}\nImagem: {ia.provedor_imagem}, {ia.modelo_imagem}")
@@ -426,9 +485,29 @@ class JanelaPrincipal(QMainWindow):
         self._atualizar_tempo()
         self._atualizar_botoes()
 
+    def peca_mudou_por_fora(self, pasta: Path) -> None:
+        """Sem reler, a próxima gravação da janela, como mover um item, desfaria o trabalho do agente de fora."""
+        self._recarregar_projetos()
+        if self.projeto is not None and self.projeto.pasta.resolve() == Path(pasta).resolve():
+            self._peca_mudou_por_fora = True
+            self._reler_se_mudou()
+
+    def _reler_se_mudou(self) -> None:
+        if not self._peca_mudou_por_fora or self.projeto is None or self.ocupado:
+            return
+        if QApplication.activeModalWidget() is not None:
+            QTimer.singleShot(ESPERA_DO_DIALOGO_MS, self._reler_se_mudou)
+            return
+        pasta = self.projeto.pasta
+        self.projeto = None
+        self.abrir_projeto(Projeto(pasta))
+        self._recarregar_projetos()
+        self.painel_chat.adicionar_evento("A peça mudou por fora, pelo MCP, e foi relida.")
+
     def abrir_projeto(self, projeto: Projeto) -> None:
         if self.projeto is not None and projeto.pasta == self.projeto.pasta:
             return
+        self._peca_mudou_por_fora = False
         self.projeto = projeto
         agente = self.trabalhador.abrir(projeto)
         self.pasta_impressao = None
@@ -447,7 +526,9 @@ class JanelaPrincipal(QMainWindow):
 
     def _verificar_se_faltar(self) -> None:
         agente = self.orquestrador
-        if agente is None or self.ocupado or not agente.versao_atual or not agente.especificacao or agente.resultado_verificacao is not None:
+        if agente is None or self.ocupado or not agente.versao_atual or agente.resultado_verificacao is not None:
+            return
+        if not agente.especificacao and not agente.so_importadas():
             return
         agente.preparar_operacao()
         self._definir_ocupado(True)
@@ -484,14 +565,93 @@ class JanelaPrincipal(QMainWindow):
             return
         caminho, _ = QFileDialog.getOpenFileName(self, "Abrir arquivo", str(Path.home() / "Documents"), FILTRO_DE_PROJETO)
         if caminho:
-            self._iniciar_tarefa_de_arquivo("Conferindo o arquivo")
-            self._pedir_importar_arquivo.emit(Path(caminho), self.config.pasta_projetos)
+            self._importar_arquivo(Path(caminho))
+
+    def _importar_arquivo(self, arquivo: Path) -> None:
+        self._iniciar_tarefa_de_arquivo("Conferindo o arquivo")
+        self._pedir_importar_arquivo.emit(arquivo, self.config.pasta_projetos)
+
+    def receber_pedido(self, arquivo: Path | None) -> None:
+        """Alguém abriu o app ou deu dois cliques em um arquivo."""
+        self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
+        self.raise_()
+        self.activateWindow()
+        if arquivo is None:
+            return
+        self._arquivos_recebidos.append(arquivo)
+        if self.ocupado:
+            self.statusBar().showMessage(f"{arquivo.name} abre quando a tarefa atual terminar.", 8000)
+        self._abrir_proximo_recebido()
+
+    def _abrir_proximo_recebido(self) -> None:
+        if not self._arquivos_recebidos or self.ocupado:
+            return
+        # Com uma janela de diálogo aberta, trocar a peça por trás dela deixaria o diálogo falando de outra peça.
+        if QApplication.activeModalWidget() is not None:
+            QTimer.singleShot(ESPERA_DO_DIALOGO_MS, self._abrir_proximo_recebido)
+            return
+        self._importar_arquivo(self._arquivos_recebidos.pop(0))
 
     def _iniciar_tarefa_de_arquivo(self, etapa: str) -> None:
         self._definir_ocupado(True)
         self.painel_chat.definir_etapa(etapa)
         # Salvar e abrir terminam em segundos e não têm como parar no meio.
         self.painel_chat.botao_cancelar.setEnabled(False)
+
+    def _importar_modelo(self, arquivos: Path | list[Path] | None = None) -> None:
+        """Um modelo baixado vai para a mesa da peça aberta. Sem peça aberta, vira uma peça nova.
+
+        Vários arquivos juntos são as cores de um modelo só, como black.stl e white.stl.
+        """
+        if self.ocupado:
+            return
+        if arquivos is None:
+            caminhos, _ = QFileDialog.getOpenFileNames(self, "Importar modelo 3D", str(Path.home() / "Downloads"), FILTRO_DE_MODELO)
+            if not caminhos:
+                return
+            arquivos = [Path(c) for c in caminhos]
+        self._iniciar_tarefa_de_arquivo("Lendo o modelo 3D")
+        self._pedir_ler_modelo.emit(arquivos)
+
+    def _ao_ler_modelo(self, modelo: ModeloLido) -> None:
+        versao = self.orquestrador.versao_atual if self.orquestrador else None
+        ocupados = set(self.projeto.stls_por_parte(versao)) if self.projeto and versao else set()
+        dialogo = DialogoImportar(modelo, self.perfil, ocupados, self)
+        aceito = dialogo.exec()
+        opcoes = dialogo.opcoes()
+        dialogo.deleteLater()
+        if not aceito:
+            shutil.rmtree(modelo.pasta, ignore_errors=True)
+            return
+        self._garantir_projeto((modelo.nome_comum or modelo.arquivo.stem)[:60])
+        self._iniciar_tarefa_de_arquivo("Colocando o modelo na mesa")
+        self._pedir_adicionar_modelo.emit(modelo, opcoes)
+
+    def _ao_adicionar_modelo(self, parte: dict[str, Any]) -> None:
+        x, y, z = parte["tamanho"]
+        self.painel_chat.adicionar_evento(f"Modelo importado: {parte['nome']}, {tema.numero(x)} × {tema.numero(y)} × {tema.numero(z)} mm.")
+
+    def _ler_regioes(self, parte: str) -> None:
+        """Achar as regiões de um modelo grande leva alguns segundos: fica fora da interface."""
+        if self.ocupado or self.projeto is None or not self._vendo_a_versao_atual():
+            return
+        self._iniciar_tarefa_de_arquivo("Procurando as regiões da peça")
+        self._pedir_regioes.emit(parte, self.projeto.stls_por_parte(self.versao_vista)[parte])
+
+    def _separar_cores(self, parte: str, regioes: Any, pintura: dict[int, str], pino: bool) -> None:
+        if self.ocupado or self.orquestrador is None:
+            return
+        self._iniciar_tarefa_de_arquivo("Separando as cores")
+        self._pedir_separar.emit(parte, regioes, pintura, pino)
+
+    def _ao_separar_cores(self, resultado: dict[str, Any]) -> None:
+        pecas = resultado["pecas"]
+        cores = ", ".join(dict.fromkeys(nome_da_cor(p["cor"]) for p in pecas))
+        texto = f"Cores separadas em {resultado['parte']}: {len(pecas)} {'peça nova' if len(pecas) == 1 else 'peças novas'} ({cores}), cada cor em um arquivo."
+        com_suporte = [p["nome"] for p in pecas if p["suporte"]]
+        if com_suporte:
+            texto += f" Marque Suporte ao preparar: {', '.join(com_suporte)} imprime com o pino para baixo."
+        self.painel_chat.adicionar_evento(texto)
 
     def _ao_salvar_arquivo(self, destino: Path) -> None:
         self.statusBar().showMessage(f"Salvo em {destino}", 8000)
@@ -557,6 +717,7 @@ class JanelaPrincipal(QMainWindow):
             self.pasta_impressao = ultimo[0]
             self.rotulo_resumo.setText(self._texto_resumo(ultimo[1]))
             self.painel_checks.mostrar_gcode(ultimo[1]["validacao"])
+            self.painel_checks.mostrar_roteiro(roteiro_da_preparacao(ultimo[1]))
         else:
             self.rotulo_resumo.setText(self._texto_sem_fatiamento())
         self._atualizar_tempo()
@@ -567,6 +728,7 @@ class JanelaPrincipal(QMainWindow):
             self.projeto.layout(versao, self.perfil),
             self.projeto.stls_por_parte(versao),
             not self.ocupado and self._vendo_a_versao_atual(),
+            self.projeto.medidas_por_parte(versao),
         )
 
     def _ao_mudar_mesa(self) -> None:
@@ -725,6 +887,8 @@ class JanelaPrincipal(QMainWindow):
         if self.versao_vista and not self.pasta_impressao:
             self.rotulo_resumo.setText(self._texto_sem_fatiamento())
         self._atualizar_botoes()
+        self._abrir_proximo_recebido()
+        self._reler_se_mudou()
 
     def _ajustar_por_especificacao(self, especificacao: dict[str, Any]) -> None:
         self.combo_material.setCurrentText(especificacao["material"])
@@ -754,6 +918,13 @@ class JanelaPrincipal(QMainWindow):
         self.painel_versoes.atualizar_versoes(self.projeto, versao)
         self._atualizar_botoes()
 
+    def _ao_agente_colorir(self, versao: str, arquivo: int) -> None:
+        self.painel_chat.adicionar_evento("Cores aplicadas na mesa.")
+        # O agente grava a mesa no disco enquanto a tela está travada, então não há edição do usuário para perder.
+        if versao == self.versao_vista:
+            self._ver_versao(versao)
+            self.painel_3d.mostrar_arquivo(arquivo)
+
     # ---------- Impressão ----------
 
     def _parametros(self) -> ParametrosFatiamento:
@@ -770,6 +941,7 @@ class JanelaPrincipal(QMainWindow):
         # O G-code pronto vale para as opções com que foi gerado: mudou, precisa preparar de novo.
         if self.pasta_impressao is not None and not self.ocupado:
             self.pasta_impressao = None
+            self.painel_3d.encerrar_simulacao()
             self.rotulo_resumo.setText("As opções mudaram. Clique em Aprovar e preparar para gerar o G-code de novo.")
             self._atualizar_tempo()
             self._atualizar_botoes()
@@ -807,8 +979,56 @@ class JanelaPrincipal(QMainWindow):
         )
         return resposta == QMessageBox.StandardButton.Yes
 
+    def _confirmar_posicao(self) -> bool:
+        """Deitada sem apoio, a peça pode se soltar da mesa no meio da impressão: seguir sem suporte exige uma decisão explícita."""
+        if self.caixa_suporte.isChecked():
+            return True
+        # Balanço e base pequena só deixam a peça mais feia, e ficam no aviso da mesa, como na posição original.
+        avisos = [a["mensagem"] for a in self.painel_3d.avisos_de_posicao() if a["codigo"] == "SEM_APOIO"] if self.painel_3d.mesa else []
+        if not avisos:
+            return True
+        resposta = QMessageBox.question(
+            self,
+            "Peça deitada sem suporte",
+            "\n\n".join(avisos) + "\n\nPreparar sem suporte mesmo assim?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return resposta == QMessageBox.StandardButton.Yes
+
+    def _confirmar_trocas(self) -> bool:
+        """Uma peça alta com várias cores pede uma pausa por camada: a pessoa precisa saber antes de deixar a impressora rodando."""
+        mesa = self.painel_3d.mesa
+        if mesa is None or self.versao_vista is None:
+            return True
+        medidas = self.projeto.medidas_por_parte(self.versao_vista)
+        camada = float(self.perfil["qualidades"][self.combo_qualidade.currentData()]["camada_mm"])
+        try:
+            total = sum(estimar_trocas(mesa, numero, medidas, camada) for numero in mesa.arquivos())
+        except ErroDeCor:
+            # A mensagem completa aparece ao fatiar.
+            return True
+        if total <= LIMITE_DE_TROCAS_SEM_AVISO:
+            return True
+        caixa = QMessageBox(self)
+        caixa.setIcon(QMessageBox.Icon.Warning)
+        caixa.setWindowTitle("Muitas trocas de filamento")
+        caixa.setText(
+            f"Esta mesa pede cerca de {total} trocas manuais de filamento, com alguém ao lado da impressora em cada uma.\n\n"
+            "Peças separadas saem melhor em um arquivo por cor, sem nenhuma pausa no meio."
+        )
+        separar = caixa.addButton("Um arquivo por cor", QMessageBox.ButtonRole.AcceptRole)
+        assim = caixa.addButton("Preparar assim mesmo", QMessageBox.ButtonRole.DestructiveRole)
+        caixa.addButton("Cancelar", QMessageBox.ButtonRole.RejectRole)
+        caixa.setDefaultButton(separar)
+        caixa.exec()
+        if caixa.clickedButton() is separar:
+            self.painel_3d.separar_por_cor()
+            return True
+        return caixa.clickedButton() is assim
+
     def _aprovar_e_fatiar(self) -> None:
-        if self.ocupado or self.orquestrador is None or not self._confirmar_material() or not self._confirmar_mesa():
+        if self.ocupado or self.orquestrador is None or not self._confirmar_material() or not self._confirmar_mesa() or not self._confirmar_posicao() or not self._confirmar_trocas():
             return
         self.orquestrador.preparar_operacao()
         self._definir_ocupado(True)
@@ -827,6 +1047,7 @@ class JanelaPrincipal(QMainWindow):
             f"{tema.numero(v['filamento_g'], 1)} g" if "filamento_g" in v else "",
             f"{v['camadas']} camadas",
             f"bico {v['bico_c']:.0f} °C, mesa {v['mesa_c']:.0f} °C",
+            f"{v['trocas_de_filamento']} {'troca' if v['trocas_de_filamento'] == 1 else 'trocas'} de filamento" if v.get("trocas_de_filamento") else "",
         ]
         return "Pronto para exportar: " + ", ".join(p for p in partes if p) + "."
 
@@ -836,8 +1057,45 @@ class JanelaPrincipal(QMainWindow):
         self.rotulo_resumo.setText(self._texto_resumo(resumo))
         self.painel_checks.mostrar_verificacao(self.orquestrador.resultado_verificacao)
         self.painel_checks.mostrar_gcode(resumo["validacao"])
+        self.painel_checks.mostrar_roteiro(roteiro_da_preparacao(resumo))
         self._atualizar_tempo()
         self._atualizar_botoes()
+
+    def _simular(self) -> None:
+        """Lê o G-code do arquivo que está na tela. A leitura fica fora da interface: um G-code pode ter milhões de linhas."""
+        resumo = self._resumo_liberado()
+        if resumo is None or self.ocupado:
+            return
+        arquivo = next((a for a in resumo.get("arquivos") or [] if a["numero"] == self.painel_3d.arquivo_ativo), None)
+        nome = arquivo["gcode"] if arquivo else resumo["gcode"]
+        validacao = arquivo["validacao"] if arquivo else resumo["validacao"]
+        cor_inicial = ((arquivo or {}).get("cores") or {}).get("cor_inicial")
+        self._iniciar_tarefa_de_arquivo("Lendo o G-code")
+        self._pedir_simulacao.emit(self.pasta_impressao / nome, cor_inicial, segundos_do_tempo(validacao.get("tempo")))
+
+    def _ao_ler_simulacao(self, percurso: Percurso) -> None:
+        self.painel_3d.iniciar_simulacao(percurso)
+
+    @staticmethod
+    def _texto_das_cores(resumo: dict[str, Any]) -> str:
+        """Para a confirmação antes de exportar: a pessoa precisa carregar a primeira cor certa."""
+        roteiro = roteiro_da_preparacao(resumo)
+        if roteiro:
+            return f"\n\n{roteiro}"
+        cores = [a["cores"]["cor_inicial"] for a in resumo.get("arquivos") or [] if (a.get("cores") or {}).get("cor_inicial")]
+        return f"\nCor: {', '.join(nome_da_cor(c) for c in cores)}" if cores else ""
+
+    def _gravar_roteiro(self, resumo: dict[str, Any], destino: Path) -> str:
+        """O roteiro vai junto com o G-code. Devolve o que acrescentar ao aviso de conclusão."""
+        roteiro = roteiro_da_preparacao(resumo)
+        if not roteiro:
+            return ""
+        try:
+            destino.write_text(f"{roteiro}\n\n{COMO_TROCAR}\n", encoding="utf-8")
+        except OSError:
+            log.exception("Falha ao gravar o roteiro de trocas")
+            return f"\n\nAs trocas de filamento:\n{roteiro}\n\n{COMO_TROCAR}"
+        return f"\n\nO passo a passo das trocas ficou em {destino.name}.\n\n{COMO_TROCAR}"
 
     def _exportar(self) -> None:
         resumo = self._resumo_liberado()
@@ -851,7 +1109,8 @@ class JanelaPrincipal(QMainWindow):
             "Exportar G-code",
             (f"Arquivos: {quantidade}\n" if quantidade > 1 else "")
             + f"Material: {p['material']}\nBico: {v['bico_c']:.0f} °C, mesa: {v['mesa_c']:.0f} °C\n"
-            f"Tempo: {v.get('tempo', 'não informado')}\nFilamento: {tema.numero(v.get('filamento_g', 0), 1)} g\n\n"
+            f"Tempo: {v.get('tempo', 'não informado')}\nFilamento: {tema.numero(v.get('filamento_g', 0), 1)} g"
+            f"{self._texto_das_cores(resumo)}\n\n"
             "Confirma que esse é o filamento carregado na impressora?",
         )
         if confirmacao != QMessageBox.StandardButton.Yes:
@@ -859,7 +1118,7 @@ class JanelaPrincipal(QMainWindow):
         unidades = unidades_removiveis()
         inicial = unidades[0] if unidades else Path.home() / "Documents"
         especificacao = self.orquestrador.especificacao if self.orquestrador else None
-        nome_peca = especificacao.nome if especificacao else "peca"
+        nome_peca = especificacao.nome if especificacao else self.projeto.titulo
         if quantidade > 1:
             destino = self._exportar_varios(inicial, nome_peca, p["material"])
             if destino is None:
@@ -874,13 +1133,15 @@ class JanelaPrincipal(QMainWindow):
             except (ExportacaoBloqueada, OSError) as erro:
                 QMessageBox.warning(self, "Não foi possível exportar", str(erro))
                 return
+        primeiro = Path(destino.splitlines()[0])
+        roteiro = primeiro.with_suffix(".txt") if quantidade <= 1 else primeiro.with_name(f"{Path(nome_sugerido(nome_peca, p['material'])).stem}_trocas.txt")
         QMessageBox.information(
             self,
             "G-code exportado",
             f"{'Arquivos salvos em' if quantidade > 1 else 'Arquivo salvo em'}:\n{destino}\n\nAntes de imprimir:\n"
             f"• A impressora não tem sensor de fim de filamento: confira se há {tema.numero(v.get('filamento_g', 0), 0)} g no carretel.\n"
             "• Limpe a mesa e faça o nivelamento, se não fez recentemente.\n"
-            "• Acompanhe a primeira camada.",
+            f"• Acompanhe a primeira camada.{self._gravar_roteiro(resumo, roteiro)}",
         )
 
     def _exportar_varios(self, inicial: Path, nome_peca: str, material: str) -> str | None:
@@ -915,7 +1176,7 @@ class JanelaPrincipal(QMainWindow):
             self._atualizar_orca()
             self._verificar_endpoint()
 
-    def closeEvent(self, evento) -> None:  # noqa: ANN001, N802 - nome definido pelo Qt.
+    def closeEvent(self, evento) -> None:
         self.painel_chat.parar_leitura()
         if self.orquestrador is not None:
             self.orquestrador.cancelar()

@@ -25,6 +25,7 @@ OBRIGATORIOS = {
     "executar_cad": {"codigo", "resumo_alteracao"},
     "verificar_peca": set(),
     "renderizar_vistas": set(),
+    "definir_cores": {"parte"},
     "fatiar_peca": {"material", "qualidade", "paredes", "preenchimento_pct", "suporte", "brim"},
 }
 
@@ -51,6 +52,16 @@ def test_materiais_iguais_ao_perfil(nome):
 
 def test_qualidades_iguais_ao_perfil():
     assert set(FERRAMENTAS["fatiar_peca"]["parameters"]["properties"]["qualidade"]["enum"]) == set(PERFIL["qualidades"])
+
+
+def test_cores_iguais_a_paleta():
+    from forja3d.fatiamento.cores import PALETA
+
+    nomes = [nome for nome, _ in PALETA]
+    propriedades = FERRAMENTAS["definir_cores"]["parameters"]["properties"]
+    assert propriedades["cor"]["enum"] == nomes
+    assert propriedades["trocas"]["items"]["properties"]["cor"]["enum"] == nomes
+    assert propriedades["corpos"]["items"]["properties"]["cor"]["enum"] == nomes
 
 
 def test_agente_nao_tem_como_mexer_em_gcode_temperatura_ou_exportacao():

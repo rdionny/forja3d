@@ -184,6 +184,110 @@
   {
     "type": "function",
     "function": {
+      "name": "definir_cores",
+      "description": "Define as cores de impressão de uma parte, por troca manual de filamento. Não gera versão nova. Só com parte, não muda nada: devolve as cores atuais e as alturas em que a peça tem faces planas.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "parte": {
+            "type": "string",
+            "description": "Nome da parte, igual à chave de result. Vale para todas as cópias dela."
+          },
+          "cor": {
+            "type": "string",
+            "description": "Cor da parte inteira. Com trocas, é a cor com que ela começa.",
+            "enum": [
+              "preto",
+              "branco",
+              "vermelho",
+              "laranja",
+              "amarelo",
+              "verde",
+              "azul",
+              "roxo",
+              "rosa",
+              "marrom",
+              "cinza",
+              "bege"
+            ]
+          },
+          "trocas": {
+            "type": "array",
+            "description": "Tudo o que está a partir de cada altura sai na cor indicada. Lista vazia remove as trocas.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "z_mm": {
+                  "type": "number",
+                  "description": "Altura em que a cor muda, medida da base da parte"
+                },
+                "cor": {
+                  "type": "string",
+                  "enum": [
+                    "preto",
+                    "branco",
+                    "vermelho",
+                    "laranja",
+                    "amarelo",
+                    "verde",
+                    "azul",
+                    "roxo",
+                    "rosa",
+                    "marrom",
+                    "cinza",
+                    "bege"
+                  ]
+                }
+              },
+              "required": [
+                "z_mm",
+                "cor"
+              ]
+            }
+          },
+          "corpos": {
+            "type": "array",
+            "description": "Só para modelo importado com corpos separados: a cor de cada corpo.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "corpo": {
+                  "type": "string"
+                },
+                "cor": {
+                  "type": "string",
+                  "enum": [
+                    "preto",
+                    "branco",
+                    "vermelho",
+                    "laranja",
+                    "amarelo",
+                    "verde",
+                    "azul",
+                    "roxo",
+                    "rosa",
+                    "marrom",
+                    "cinza",
+                    "bege"
+                  ]
+                }
+              },
+              "required": [
+                "corpo",
+                "cor"
+              ]
+            }
+          }
+        },
+        "required": [
+          "parte"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "fatiar_peca",
       "description": "Fatia a versão atual com o OrcaSlicer e valida o G-code. Só funciona após a aprovação do usuário.",
       "parameters": {

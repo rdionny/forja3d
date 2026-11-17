@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from apoio_conceitos import ANALISE, REPROVADA, ClienteFalso, imagem_png, texto_ia
-from forja3d.agente.orquestrador import Orquestrador
+from forja3d.agente.orquestrador import LEGENDA_DA_REFERENCIA, Orquestrador, _tem_a_legenda
 from forja3d.conceitos.fluxo import (
     MAX_TENTATIVAS,
     PROMPT_ANALISE,
@@ -400,6 +400,81 @@ def test_nao_duplica_as_imagens_na_mesma_conversa(config, perfil, projeto):
     agente.processar_conceito(conceito)
     agente.processar("O carregador tem 60 mm")
     assert len(imagens_na_ultima_chamada(cliente)) == 1
+
+
+def _projeto_com_parte(projeto):
+    pasta = projeto.pasta_temporaria()
+    (pasta / "script.py").write_text("x", encoding="utf-8")
+    (pasta / "figuras.stl").write_bytes(b"")
+    medidas = [{"nome": "figuras", "stl": "figuras.stl", "tamanho": [30.0, 20.0, 19.0], "furos": [], "volume_mm3": 1000.0, "solidos": 1, "valido": True}]
+    versao = projeto.registrar_versao(pasta, None, medidas, "teste")
+    projeto.estado["versao_atual"] = versao
+    projeto.salvar_estado()
+
+
+def _vistas_falsas(monkeypatch, tmp_path):
+    vista = tmp_path / "frontal.png"
+    vista.write_bytes(imagem_png("white"))
+    monkeypatch.setattr("forja3d.agente.orquestrador.renderizar", lambda *_a, **_k: [vista])
+
+
+def _legendas(cliente):
+    return [m["content"][0]["text"] for m in imagens_na_ultima_chamada(cliente)]
+
+
+def test_pedido_sobre_uma_parte_tambem_leva_a_referencia_e_o_conceito(config, perfil, projeto, monkeypatch, tmp_path):
+    conceito = conceito_escolhido(projeto)
+    _projeto_com_parte(projeto)
+    _vistas_falsas(monkeypatch, tmp_path)
+    cliente = ClienteAgente(texto_ia("ok"), texto_ia("ok"))
+    agente = Orquestrador(config, perfil, cliente, projeto)
+    agente.processar_conceito(conceito)
+
+    agente.processar_parte("Deixe os rostos humanos", "figuras")
+
+    legendas = _legendas(cliente)
+    assert len(legendas) == 2
+    assert legendas[0].startswith("[Sistema] Vistas da parte selecionada")
+    assert legendas[1] == LEGENDA_DA_REFERENCIA
+    com_referencia = imagens_na_ultima_chamada(cliente)[1]
+    assert len(partes_de_imagem(com_referencia)) == 2
+
+
+def test_parte_sem_vistas_tambem_recebe_a_referencia(config, perfil, projeto, monkeypatch):
+    conceito = conceito_escolhido(projeto)
+    _projeto_com_parte(projeto)
+
+    def falha(*_a, **_k):
+        raise RuntimeError("sem render")
+
+    monkeypatch.setattr("forja3d.agente.orquestrador.renderizar", falha)
+    cliente = ClienteAgente(texto_ia("ok"), texto_ia("ok"))
+    agente = Orquestrador(config, perfil, cliente, projeto)
+    agente.processar_conceito(conceito)
+    agente.processar_parte("Ajuste", "figuras")
+    assert _legendas(cliente) == [LEGENDA_DA_REFERENCIA]
+
+
+def test_referencia_volta_no_pedido_seguinte_depois_das_vistas(config, perfil, projeto, tmp_path):
+    conceito = conceito_escolhido(projeto)
+    vista = tmp_path / "frontal.png"
+    vista.write_bytes(imagem_png("white"))
+    cliente = ClienteAgente(texto_ia("ok"), texto_ia("ok"))
+    agente = Orquestrador(config, perfil, cliente, projeto)
+    agente.processar_conceito(conceito)
+    # As vistas tiram a referência do histórico e só trazem o conceito de volta.
+    agente._anexar_imagens([vista])
+    assert not any(_tem_a_legenda(m, LEGENDA_DA_REFERENCIA) for m in agente.mensagens)
+    agente.processar("Melhore os rostos")
+    assert LEGENDA_DA_REFERENCIA in _legendas(cliente)
+
+
+def test_peca_sem_conceito_nao_recebe_referencia(config, perfil, projeto, monkeypatch, tmp_path):
+    _projeto_com_parte(projeto)
+    _vistas_falsas(monkeypatch, tmp_path)
+    cliente = ClienteAgente(texto_ia("ok"))
+    Orquestrador(config, perfil, cliente, projeto).processar_parte("Ajuste", "figuras")
+    assert LEGENDA_DA_REFERENCIA not in _legendas(cliente)
 
 
 def test_escolher_outro_conceito_troca_as_imagens(config, perfil, projeto):

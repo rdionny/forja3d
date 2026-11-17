@@ -6,7 +6,8 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 
-_ICONES = (Path(__file__).parent / "icones").as_posix()
+PASTA_ICONES = Path(__file__).parent / "icones"
+_ICONES = PASTA_ICONES.as_posix()
 OPACIDADE_DESLIGADO = 0.3
 
 FUNDO = "#14161a"
@@ -53,6 +54,9 @@ QFrame#bolhaErro {{ background: #3a2228; border: 1px solid {ERRO}; border-radius
 QFrame#barraImpressao {{ background: {PAINEL}; border-top: 1px solid {BORDA}; }}
 QFrame#linhaEtapa {{ background: {ELEVADO}; border-radius: 8px; }}
 QFrame#itemCheck {{ background: {ELEVADO}; border-radius: 6px; }}
+QSlider::groove:horizontal {{ height: 6px; background: {BORDA}; border-radius: 3px; }}
+QSlider::sub-page:horizontal {{ background: {ACENTO}; border-radius: 3px; }}
+QSlider::handle:horizontal {{ background: {TEXTO}; width: 14px; height: 14px; margin: -4px 0; border-radius: 7px; }}
 QScrollArea {{ border: none; background: transparent; }}
 QScrollArea > QWidget > QWidget {{ background: transparent; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}

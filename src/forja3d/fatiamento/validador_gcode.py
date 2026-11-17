@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import Any
 
 BLOQUEIO, ALERTA, INFO = "BLOQUEIO", "ALERTA", "INFO"
+# Marcam a rotina de troca de filamento, a única parte em que a cabeça pode sair da mesa depois da primeira camada.
+MARCA_INICIO = "; FORJA3D_TROCA_INICIO"
+MARCA_FIM = "; FORJA3D_TROCA_FIM"
 LISTA_BRANCA = frozenset(
     ["G0", "G1", "G2", "G3", "G4", "G21", "G28", "G90", "G91", "G92", "M25", "M73", "M82", "M83", "M84", "M104", "M105", "M106", "M107", "M109", "M117", "M140", "M190", "M201", "M203", "M204", "M205", "M220", "M221", "M400", "M600"]
 )
@@ -34,6 +37,8 @@ def validar_gcode(
     tamanho_peca_xy: tuple[float, float] | None = None,
     brim_mm: float = 0.0,
     area_esperada: tuple[float, float, float, float] | None = None,
+    folga_de_suporte_mm: float = 0.0,
+    trocas_esperadas: int = 0,
 ) -> dict[str, Any]:
     limites = perfil["validacao_gcode"]
     dados_material = perfil["materiais"][material]
@@ -62,6 +67,9 @@ def validar_gcode(
     extrusao = {"X": [float("inf"), float("-inf")], "Y": [float("inf"), float("-inf")], "Z": [float("inf"), float("-inf")]}
     z_maximo = 0.0
     excesso_velocidade = False
+    em_troca = False
+    z_antes_da_troca = 0.0
+    pausas = 0
     resumo: dict[str, Any] = {}
 
     with open(caminho, encoding="utf-8", errors="replace") as arquivo:
@@ -73,6 +81,14 @@ def validar_gcode(
                 if _MARCA_CAMADA.match(linha):
                     camadas += 1
                     antes_da_primeira_camada = False
+                elif linha.startswith(MARCA_INICIO):
+                    em_troca = True
+                    z_antes_da_troca = pos["Z"]
+                elif linha.startswith(MARCA_FIM):
+                    em_troca = False
+                    # Voltar mais baixo levaria o bico contra o que já foi impresso, na viagem de volta para a peça.
+                    if pos["Z"] < z_antes_da_troca - 0.001:
+                        registrar("TROCA_SEM_VOLTAR_A_ALTURA", BLOQUEIO, f"Depois da troca de filamento, o bico volta em Z={pos['Z']:g} mm, abaixo dos {z_antes_da_troca:g} mm em que estava.", numero)
                 elif "tempo" not in resumo and (m := _TEMPO.search(linha)):
                     resumo["tempo"] = m.group(1).strip()
                 elif "filamento_g" not in resumo and (m := _FILAMENTO_G.search(linha)):
@@ -91,7 +107,14 @@ def validar_gcode(
                 continue
             args = {m[0].upper(): float(m[1]) for m in _PALAVRA.findall(partes[1] if len(partes) > 1 else "")}
 
-            if comando == "G90":
+            if comando == "M25":
+                pausas += 1
+                if not em_troca:
+                    registrar("PAUSA_FORA_DA_TROCA", BLOQUEIO, "Há uma pausa fora de uma troca de filamento.", numero)
+            elif comando == "M600":
+                # O app troca cada M600 pela rotina de pausa. Se sobrou um, a etapa falhou, e o que ele faz nesta impressora não foi testado.
+                registrar("TROCA_SEM_ROTINA", BLOQUEIO, "Há uma troca de filamento (M600) sem a rotina de pausa.", numero)
+            elif comando == "G90":
                 # No Marlin, G90 também devolve o eixo E ao modo absoluto.
                 xyz_relativo = False
                 e_relativo = False
@@ -136,7 +159,8 @@ def validar_gcode(
                 moveu = any(eixo in args for eixo in "XYZ")
                 # Só o destino importa: a primeira viagem da camada 1 parte da purga, em X=-2,4.
                 if moveu:
-                    x_min = limites["x_min_bloco_inicial"] if antes_da_primeira_camada else limites["x_min"]
+                    # A purga da troca usa o mesmo canto da purga inicial, em X=-2,4.
+                    x_min = limites["x_min_bloco_inicial"] if antes_da_primeira_camada or em_troca else limites["x_min"]
                     if not x_min <= pos["X"] <= limites["x_max"]:
                         registrar("FORA_DA_MESA_X", BLOQUEIO, f"Movimento até X={pos['X']:g} mm, fora da mesa.", numero)
                     if not limites["y_min"] <= pos["Y"] <= limites["y_max"]:
@@ -160,7 +184,7 @@ def validar_gcode(
                         extrudiu = True
                         bico_desligado_depois = False
                         mesa_desligada_depois = False
-                        if moveu and not antes_da_primeira_camada:
+                        if moveu and not antes_da_primeira_camada and not em_troca:
                             if z_primeira is None:
                                 z_primeira = pos["Z"]
                             for eixo in "XYZ":
@@ -184,7 +208,7 @@ def validar_gcode(
     if area_esperada and z_primeira is not None:
         # O que o usuário posicionou na mesa precisa ser o que vai imprimir.
         x0, x1, y0, y1 = area_esperada
-        tolerancia = brim_mm + 1.0
+        tolerancia = brim_mm + folga_de_suporte_mm + 1.0
         if extrusao["X"][0] < x0 - tolerancia or extrusao["X"][1] > x1 + tolerancia or extrusao["Y"][0] < y0 - tolerancia or extrusao["Y"][1] > y1 + tolerancia:
             registrar(
                 "POSICAO_DIVERGENTE",
@@ -192,6 +216,8 @@ def validar_gcode(
                 f"A área impressa (X {extrusao['X'][0]:g} a {extrusao['X'][1]:g}, Y {extrusao['Y'][0]:g} a {extrusao['Y'][1]:g} mm) "
                 f"não é a da mesa (X {x0:g} a {x1:g}, Y {y0:g} a {y1:g} mm).",
             )
+    if pausas != trocas_esperadas:
+        registrar("TROCAS_DIVERGENTES", BLOQUEIO, f"O arquivo tem {pausas} pausa(s) para trocar filamento, e o roteiro prevê {trocas_esperadas}.")
     if excesso_velocidade:
         registrar("VELOCIDADE_ACIMA", INFO, "Há valores de F acima do limite da máquina. O firmware limita o movimento.")
 
@@ -203,6 +229,7 @@ def validar_gcode(
         "alertas": [i for i in lista if i["severidade"] == ALERTA],
         "informacoes": [i for i in lista if i["severidade"] == INFO],
         "camadas": camadas,
+        "trocas_de_filamento": pausas,
         "z_maximo_mm": round(z_maximo, 3),
         "bico_c": max(temperaturas_bico) if temperaturas_bico else None,
         "mesa_c": max(temperaturas_mesa) if temperaturas_mesa else None,

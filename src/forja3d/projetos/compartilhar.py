@@ -22,7 +22,8 @@ from pydantic import ValidationError
 
 from forja3d.agente.especificacao import Especificacao
 from forja3d.conceitos.fluxo import mensagem_do_conceito
-from forja3d.layout_mesa import LayoutMesa
+from forja3d.fatiamento.cores import cor_valida
+from forja3d.layout_mesa import LayoutMesa, tombo_valido
 from forja3d.projetos.armazenamento import Projeto, gravar_json, ler_json
 
 EXTENSAO = ".forja3d"
@@ -193,7 +194,29 @@ def _parte_limpa(parte: Any, pasta: Path) -> dict[str, Any]:
         raise ArquivoInvalido(NAO_E_PROJETO)
     if not _numero(parte.get("volume_mm3")) or not isinstance(parte.get("solidos"), int) or not isinstance(parte.get("furos"), list):
         raise ArquivoInvalido(NAO_E_PROJETO)
-    return {c: v for c, v in parte.items() if c != "step"}
+    limpa = {c: v for c, v in parte.items() if c != "step"}
+    if "corpos" in parte:
+        limpa["corpos"] = _corpos_limpos(parte, pasta)
+        nomes = {c["nome"] for c in limpa["corpos"]}
+        limpa["fundo"] = parte.get("fundo") if parte.get("fundo") in nomes else None
+    if "cor" in parte:
+        limpa["cor"] = cor_valida(parte["cor"])
+    return limpa
+
+
+def _corpos_limpos(parte: dict[str, Any], pasta: Path) -> list[dict[str, Any]]:
+    """Cada corpo aponta para um STL: passa pela mesma conferência do arquivo da parte."""
+    corpos = parte["corpos"]
+    if not isinstance(corpos, list):
+        raise ArquivoInvalido(NAO_E_PROJETO)
+    limpos = []
+    for corpo in corpos:
+        if not isinstance(corpo, dict) or not isinstance(corpo.get("nome"), str) or not isinstance(corpo.get("stl"), str):
+            raise ArquivoInvalido(NAO_E_PROJETO)
+        if not _NOME_DE_STL.fullmatch(corpo["stl"]) or not (pasta / corpo["stl"]).is_file() or not _stl_valido(pasta / corpo["stl"]):
+            raise ArquivoInvalido(f"Um dos corpos da parte “{parte['nome']}” está faltando ou corrompido.")
+        limpos.append({"nome": corpo["nome"], "stl": corpo["stl"], "cor": cor_valida(corpo.get("cor"))})
+    return limpos
 
 
 def _conferir_versao(pasta: Path, perfil: dict[str, Any]) -> None:
@@ -208,7 +231,7 @@ def _conferir_versao(pasta: Path, perfil: dict[str, Any]) -> None:
     info = ler_json(pasta / "info.json", {})
     info = info if isinstance(info, dict) else {}
     gravar_json(pasta / "info.json", {c: info[c] for c in ("resumo", "criado_em") if isinstance(info.get(c), str)})
-    _conferir_layout(pasta, {p["nome"]: (float(p["tamanho"][0]), float(p["tamanho"][1])) for p in partes}, perfil)
+    _conferir_layout(pasta, {p["nome"]: tuple(float(v) for v in p["tamanho"][:3]) for p in partes}, perfil)
 
 
 def _especificacao_limpa(dados: Any) -> dict[str, Any] | None:
@@ -228,12 +251,13 @@ def _item_de_mesa_valido(item: Any) -> bool:
         and _numero(item.get("x"))
         and _numero(item.get("y"))
         and item.get("giro", 0) in GIROS
+        and (item.get("tombo") is None or tombo_valido(item["tombo"]) is not None)
         and isinstance(item.get("arquivo", 1), int)
         and item.get("arquivo", 1) >= 1
     )
 
 
-def _conferir_layout(pasta: Path, tamanhos: dict[str, tuple[float, float]], perfil: dict[str, Any]) -> None:
+def _conferir_layout(pasta: Path, tamanhos: dict[str, tuple[float, ...]], perfil: dict[str, Any]) -> None:
     """Uma mesa estragada não impede de abrir a peça: ela volta para a organização automática."""
     caminho = pasta / "layout.json"
     if not caminho.exists():

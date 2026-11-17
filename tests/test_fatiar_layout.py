@@ -6,6 +6,7 @@ import pytest
 import trimesh
 
 from forja3d.fatiamento.orca import (
+    FOLGA_DE_SUPORTE_MM,
     ErroFatiamento,
     ParametrosFatiamento,
     fatiar_layout,
@@ -151,3 +152,29 @@ def test_validador_reprova_gcode_fora_da_posicao_da_mesa(tmp_path, stls, perfil)
     errado = validar_gcode(gcode, perfil, "PLA", 0.2, None, 0.0, (150.0, 170.0, 150.0, 170.0))
     assert not errado["aprovado"]
     assert errado["bloqueios"][0]["codigo"] == "POSICAO_DIVERGENTE"
+
+
+def test_base_do_suporte_pode_passar_da_caixa_do_item(tmp_path, stls, perfil):
+    layout = LayoutMesa(TAMANHOS, perfil, [ItemMesa("1", "longa", 100.0, 100.0)])
+    fatiar_layout(layout, stls, PLA, perfil, tmp_path / "saida")
+    gcode = tmp_path / "saida" / "peca.gcode"
+    x0, x1, y0, y1 = extrusao_xy(gcode)
+    # Um item menor do que o que saiu: é o que acontece quando o suporte alarga a base.
+    caixa_do_item = (x0 + 3.0, x1 - 3.0, y0 + 3.0, y1 - 3.0)
+    sem_folga = validar_gcode(gcode, perfil, "PLA", 0.2, None, 0.0, caixa_do_item)
+    assert "POSICAO_DIVERGENTE" in {b["codigo"] for b in sem_folga["bloqueios"]}
+    com_folga = validar_gcode(gcode, perfil, "PLA", 0.2, None, 0.0, caixa_do_item, FOLGA_DE_SUPORTE_MM)
+    assert "POSICAO_DIVERGENTE" not in {b["codigo"] for b in com_folga["bloqueios"]}
+
+
+def test_peca_com_balanco_e_suporte_sai_aprovada(tmp_path, perfil):
+    haste = trimesh.creation.box(extents=(8.0, 8.0, 30.0))
+    haste.apply_translation((0.0, 0.0, 15.0))
+    braco = trimesh.creation.box(extents=(70.0, 8.0, 4.0))
+    braco.apply_translation((0.0, 0.0, 32.0))
+    caminho = tmp_path / "t.stl"
+    trimesh.util.concatenate([haste, braco]).export(caminho)
+    layout = LayoutMesa({"t": (70.0, 8.0)}, perfil, [ItemMesa("1", "t", 110.0, 110.0)])
+    parametros = ParametrosFatiamento(material="PLA", qualidade="rascunho", paredes=2, preenchimento_pct=10, suporte=True)
+    resumo = fatiar_layout(layout, {"t": caminho}, parametros, perfil, tmp_path / "saida")
+    assert resumo["validacao"]["aprovado"], resumo["validacao"]["bloqueios"]

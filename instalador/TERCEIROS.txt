@@ -1,0 +1,6 @@
+Programas de terceiros que acompanham o Forja3D
+
+OrcaSlicer 2.4.2
+  Programa separado, sem nenhuma alteração. O Forja3D o chama pela linha de comando para gerar o G-code.
+  Licença: AGPL-3.0. O texto está em ferramentas\OrcaSlicer_2.4.2\LICENSE.txt.
+  Código-fonte desta versão: https://github.com/SoftFever/OrcaSlicer/tree/v2.4.2

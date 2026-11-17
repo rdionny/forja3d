@@ -10,6 +10,12 @@ from forja3d.impressora import carregar_perfil
 DADOS = Path(__file__).parent / "dados"
 
 
+@pytest.fixture(autouse=True)
+def codex_de_mentira(tmp_path, monkeypatch):
+    """Nenhum teste pode mexer no config.toml do Codex de verdade: salvar as configurações liga o Forja3D nele."""
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex_de_teste"))
+
+
 @pytest.fixture
 def perfil():
     return carregar_perfil()

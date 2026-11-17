@@ -8,14 +8,17 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 ESPACO_ENTRE_ITENS_MM = 6.0
 FOLGA_MINIMA_MM = 2.0
 PASSO_DE_BUSCA_MM = 5.0
 INCLINACAO_MINIMA_DO_RAIO = 0.02
+_COR = re.compile(r"#[0-9A-Fa-f]{6}")
+IDENTIDADE = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
 
 
 @dataclass
@@ -26,6 +29,69 @@ class ItemMesa:
     y: float
     arquivo: int = 1
     giro: int = 0
+    # Cor de cada corpo, em #RRGGBB. A peça sem corpos usa a chave "".
+    cores: dict[str, str] = field(default_factory=dict)
+    # Com um corpo aqui, só a primeira camada é colorida, e o resto sai na cor dele. "" desliga o que veio na importação.
+    fundo: str | None = None
+    # A peça deitada: matriz de rotação 3x3 em nove números, por linhas, aplicada antes do giro. None: como foi modelada.
+    tombo: list[float] | None = None
+
+
+def _produto(a: list[float], b: list[float]) -> list[float]:
+    return [sum(a[3 * linha + k] * b[3 * k + coluna] for k in range(3)) for linha in range(3) for coluna in range(3)]
+
+
+def _rotacao(eixo: str, graus: float) -> list[float]:
+    c, s = math.cos(math.radians(graus)), math.sin(math.radians(graus))
+    return {"x": [1.0, 0.0, 0.0, 0.0, c, -s, 0.0, s, c], "y": [c, 0.0, s, 0.0, 1.0, 0.0, -s, 0.0, c], "z": [c, -s, 0.0, s, c, 0.0, 0.0, 0.0, 1.0]}[eixo]
+
+
+def _arredondar(matriz: list[float]) -> list[float]:
+    """Tira o resíduo de cos(90°), e o + 0.0 tira o -0.0: uma peça deitada a 90° fica com a caixa exata."""
+    return [round(valor, 9) + 0.0 for valor in matriz]
+
+
+def tombo_valido(dados: Any) -> list[float] | None:
+    """Uma rotação de verdade, ou None. Também vem de arquivo, e outra matriz qualquer deformaria a peça."""
+    if not isinstance(dados, list) or len(dados) != 9:
+        return None
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in dados):
+        return None
+    m = [float(v) for v in dados]
+    transposta = [m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]]
+    determinante = m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6])
+    if abs(determinante - 1.0) > 1e-6 or any(abs(a - b) > 1e-6 for a, b in zip(_produto(m, transposta), IDENTIDADE)):
+        return None
+    return None if m == IDENTIDADE else m
+
+
+def rotacao_do_item(item: ItemMesa) -> list[float]:
+    """A rotação completa do item, em nove números: primeiro deita, depois gira sobre a mesa."""
+    giro = _arredondar(_rotacao("z", item.giro))
+    return _produto(giro, item.tombo) if item.tombo else giro
+
+
+def _caixa_girada(caixa: tuple[float, float, float], rotacao: list[float]) -> tuple[float, float, float]:
+    """A caixa que cabe em volta da caixa girada. Em 90° é exata. Em outro ângulo, a peça pode ocupar menos, nunca mais."""
+    largura, profundidade, altura = (sum(abs(rotacao[3 * linha + coluna]) * caixa[coluna] for coluna in range(3)) for linha in range(3))
+    return largura, profundidade, altura
+
+
+def _cores_validas(dados: Any) -> dict[str, str]:
+    if not isinstance(dados, dict):
+        return {}
+    return {str(k): v.upper() for k, v in dados.items() if isinstance(v, str) and _COR.fullmatch(v)}
+
+
+def _alturas_validas(dados: Any) -> list[dict[str, Any]]:
+    """Trocas por altura de um arquivo, da mais baixa para a mais alta. O que não faz sentido fica de fora."""
+    if not isinstance(dados, list):
+        return []
+    validas = []
+    for troca in dados:
+        if isinstance(troca, dict) and isinstance(troca.get("z"), (int, float)) and not isinstance(troca["z"], bool) and troca["z"] > 0 and isinstance(troca.get("cor"), str) and _COR.fullmatch(troca["cor"]):
+            validas.append({"z": float(troca["z"]), "cor": troca["cor"].upper()})
+    return sorted(validas, key=lambda t: t["z"])
 
 
 def novo_id() -> str:
@@ -45,13 +111,18 @@ def ponto_no_plano(inicio: tuple[float, ...], fim: tuple[float, ...], z: float) 
 
 
 class LayoutMesa:
-    def __init__(self, tamanhos: dict[str, tuple[float, float]], perfil: dict[str, Any], itens: list[ItemMesa] | None = None) -> None:
+    def __init__(self, tamanhos: dict[str, tuple[float, ...]], perfil: dict[str, Any], itens: list[ItemMesa] | None = None) -> None:
         volume = perfil["volume_mm"]
+        # X e Y de cada parte, e Z para saber como ela fica deitada.
         self.tamanhos = dict(tamanhos)
         self.largura = float(volume["fisico"]["x"])
         self.profundidade = float(volume["fisico"]["y"])
         self.margem = float(volume["margem_lateral"])
+        self.maximo_xy = float(volume["maximo_fatiador_xy"])
+        self.altura_maxima = float(volume["seguro"]["z"])
         self.itens: list[ItemMesa] = list(itens or [])
+        # Por arquivo: a mesa inteira muda de cor a partir de cada altura.
+        self.alturas: dict[int, list[dict[str, Any]]] = {}
 
     @classmethod
     def novo(cls, tamanhos: dict[str, tuple[float, float]], perfil: dict[str, Any]) -> LayoutMesa:
@@ -75,21 +146,60 @@ class LayoutMesa:
         return layout
 
     def para_dados(self) -> dict[str, Any]:
-        return {"partes": list(self.tamanhos), "itens": [asdict(i) for i in self.itens]}
+        dados: dict[str, Any] = {"partes": list(self.tamanhos), "itens": [self._item_para_dados(i) for i in self.itens]}
+        if self.alturas:
+            dados["alturas"] = {str(numero): trocas for numero, trocas in self.alturas.items()}
+        return dados
+
+    @staticmethod
+    def _item_para_dados(item: ItemMesa) -> dict[str, Any]:
+        dados = asdict(item)
+        # Peça sem cor continua com o mesmo arquivo de antes.
+        if not item.cores:
+            del dados["cores"]
+        if item.fundo is None:
+            del dados["fundo"]
+        if item.tombo is None:
+            del dados["tombo"]
+        return dados
 
     def restaurar(self, dados: dict[str, Any]) -> None:
         self.itens = [
-            ItemMesa(str(i["id"]), str(i["parte"]), float(i["x"]), float(i["y"]), int(i.get("arquivo", 1)), int(i.get("giro", 0)) % 360)
+            ItemMesa(
+                str(i["id"]),
+                str(i["parte"]),
+                float(i["x"]),
+                float(i["y"]),
+                int(i.get("arquivo", 1)),
+                int(i.get("giro", 0)) % 360,
+                _cores_validas(i.get("cores")),
+                i["fundo"] if isinstance(i.get("fundo"), str) else None,
+                tombo_valido(i.get("tombo")),
+            )
             for i in dados.get("itens", [])
             if i.get("parte") in self.tamanhos
         ]
         for item in self.itens:
             item.x, item.y = self.limitar(item, item.x, item.y)
+        alturas = dados.get("alturas")
+        self.alturas = {}
+        for numero, trocas in (alturas.items() if isinstance(alturas, dict) else ()):
+            validas = _alturas_validas(trocas)
+            if validas and str(numero).isdigit():
+                self.alturas[int(numero)] = validas
         self._compactar()
 
     def assinatura(self) -> str:
         """Muda quando o que vai para a impressora muda. O G-code preparado guarda esse valor."""
-        conteudo = sorted((i.arquivo, i.parte, i.x, i.y, i.giro) for i in self.itens)
+        def chave(i: ItemMesa) -> tuple[Any, ...]:
+            base = (i.arquivo, i.parte, i.x, i.y, i.giro)
+            if i.tombo is not None:
+                return (*base, sorted(i.cores.items()), i.fundo or "", i.tombo)
+            return (*base, sorted(i.cores.items()), i.fundo or "") if i.cores or i.fundo is not None else base
+
+        conteudo = sorted(chave(i) for i in self.itens)
+        if self.alturas:
+            conteudo.append(sorted(self.alturas.items()))
         return hashlib.sha1(json.dumps(conteudo).encode()).hexdigest()
 
     # ---------- Consultas ----------
@@ -97,9 +207,22 @@ class LayoutMesa:
     def item(self, identificador: str | None) -> ItemMesa | None:
         return next((i for i in self.itens if i.id == identificador), None)
 
+    def _caixa_da_parte(self, parte: str) -> tuple[float, float, float]:
+        tamanho = self.tamanhos[parte]
+        return (tamanho[0], tamanho[1], tamanho[2] if len(tamanho) > 2 else 0.0)
+
     def tamanho_do_item(self, item: ItemMesa) -> tuple[float, float]:
-        dx, dy = self.tamanhos[item.parte]
-        return (dy, dx) if item.giro % 180 else (dx, dy)
+        dx, dy, _ = self._caixa_da_parte(item.parte)
+        if item.tombo is None:
+            return (dy, dx) if item.giro % 180 else (dx, dy)
+        return _caixa_girada(self._caixa_da_parte(item.parte), rotacao_do_item(item))[:2]
+
+    def altura_do_item(self, item: ItemMesa) -> float:
+        caixa = self._caixa_da_parte(item.parte)
+        return caixa[2] if item.tombo is None else _caixa_girada(caixa, rotacao_do_item(item))[2]
+
+    def cabe_na_impressora(self, item: ItemMesa) -> bool:
+        return max(self.tamanho_do_item(item)) <= self.maximo_xy and self.altura_do_item(item) <= self.altura_maxima
 
     def arquivos(self) -> list[int]:
         return sorted({i.arquivo for i in self.itens})
@@ -145,6 +268,9 @@ class LayoutMesa:
                         encontrados.update((a.id, b.id))
         return encontrados
 
+    def cabe_no_arquivo(self, item: ItemMesa, numero: int) -> bool:
+        return self._posicao_livre(replace(item, arquivo=numero), (item.x, item.y)) is not None
+
     # ---------- Alterações ----------
 
     def mover(self, identificador: str, x: float, y: float) -> tuple[float, float]:
@@ -157,11 +283,40 @@ class LayoutMesa:
         item.giro = (item.giro + 90) % 360
         item.x, item.y = self.limitar(item, item.x, item.y)
 
-    def adicionar(self, parte: str, arquivo: int | None = None, perto: tuple[float, float] | None = None, giro: int = 0) -> ItemMesa:
+    def tombar(self, identificador: str, eixo: str, graus: float) -> bool:
+        """Deita o item em relação à mesa: em "x", o topo vai para a frente, e em "y", para a direita.
+
+        Devolve False, sem mudar nada, se ele não couber na impressora assim.
+        """
+        item = self.item(identificador)
+        passo = _produto(_produto(_rotacao("z", -item.giro), _rotacao(eixo, graus)), _rotacao("z", item.giro))
+        tombo = tombo_valido(_arredondar(_produto(passo, item.tombo or IDENTIDADE)))
+        if not self.cabe_na_impressora(replace(item, tombo=tombo)):
+            return False
+        item.tombo = tombo
+        item.x, item.y = self.limitar(item, item.x, item.y)
+        return True
+
+    def endireitar(self, identificador: str) -> None:
+        """Volta para a posição em que a peça foi modelada."""
+        item = self.item(identificador)
+        item.tombo = None
+        item.x, item.y = self.limitar(item, item.x, item.y)
+
+    def adicionar(
+        self,
+        parte: str,
+        arquivo: int | None = None,
+        perto: tuple[float, float] | None = None,
+        giro: int = 0,
+        cores: dict[str, str] | None = None,
+        fundo: str | None = None,
+        tombo: list[float] | None = None,
+    ) -> ItemMesa:
         """Coloca uma cópia em um lugar livre. Sem espaço no arquivo, ela vai para outro."""
         existentes = self.arquivos()
         pedido = arquivo if arquivo is not None else (existentes[0] if existentes else 1)
-        modelo = ItemMesa(novo_id(), parte, 0.0, 0.0, pedido, giro)
+        modelo = ItemMesa(novo_id(), parte, 0.0, 0.0, pedido, giro, dict(cores or {}), fundo, list(tombo) if tombo else None)
         for numero in [pedido, *(n for n in existentes if n != pedido)]:
             modelo.arquivo = numero
             posicao = self._posicao_livre(modelo, perto)
@@ -177,7 +332,38 @@ class LayoutMesa:
     def duplicar(self, identificador: str) -> ItemMesa:
         original = self.item(identificador)
         dx, _ = self.tamanho_do_item(original)
-        return self.adicionar(original.parte, original.arquivo, (original.x + dx + ESPACO_ENTRE_ITENS_MM, original.y), original.giro)
+        return self.adicionar(original.parte, original.arquivo, (original.x + dx + ESPACO_ENTRE_ITENS_MM, original.y), original.giro, original.cores, original.fundo, original.tombo)
+
+    def definir_cores(self, identificador: str, cores: dict[str, str], fundo: str | None = None) -> None:
+        item = self.item(identificador)
+        item.cores = _cores_validas(cores)
+        item.fundo = fundo
+
+    def definir_alturas(self, numero: int, trocas: list[dict[str, Any]]) -> None:
+        validas = _alturas_validas(trocas)
+        if validas:
+            self.alturas[numero] = validas
+        else:
+            self.alturas.pop(numero, None)
+
+    def separar_por_cor(self, numero: int, cor_do_item: Any) -> int:
+        """Deixa cada cor em um arquivo próprio: nada de troca no meio, é só carregar o filamento e imprimir.
+
+        `cor_do_item` devolve a cor de um item, ou None se ele tiver mais de uma. Esse fica onde está. Devolve os arquivos criados.
+        """
+        por_cor: dict[str, list[ItemMesa]] = {}
+        for item in self.itens_do_arquivo(numero):
+            cor = cor_do_item(item)
+            if cor is not None:
+                por_cor.setdefault(cor, []).append(item)
+        # O primeiro grupo continua aqui, a não ser que outro item, de várias cores, já divida o arquivo com ele.
+        grupos = list(por_cor.values())[1:]
+        for itens in grupos:
+            destino = max(self.arquivos(), default=0) + 1
+            for item in itens:
+                item.arquivo = destino
+        self._compactar()
+        return len(grupos)
 
     def remover(self, identificador: str) -> None:
         self.itens = [i for i in self.itens if i.id != identificador]
@@ -202,7 +388,7 @@ class LayoutMesa:
             item.giro = 0
         proximo = max(self.arquivos(), default=0) + 1
         for numero in self.arquivos():
-            restantes = sorted(self.itens_do_arquivo(numero), key=lambda i: (-self.tamanhos[i.parte][1], -self.tamanhos[i.parte][0]))
+            restantes = sorted(self.itens_do_arquivo(numero), key=lambda i: (-self.tamanho_do_item(i)[1], -self.tamanho_do_item(i)[0]))
             atual = numero
             while restantes:
                 restantes = self._empacotar(restantes, atual)
@@ -250,7 +436,7 @@ class LayoutMesa:
         dx, dy = self.tamanho_do_item(modelo)
         alvo = perto or (self.largura / 2, self.profundidade / 2)
         ocupados = [i for i in self.itens if i.arquivo == modelo.arquivo and i is not modelo]
-        teste = ItemMesa("", modelo.parte, 0.0, 0.0, modelo.arquivo, modelo.giro)
+        teste = replace(modelo, id="", x=0.0, y=0.0)
         posicoes = {self.limitar(teste, *alvo)}
         passos_x = int((self.largura - dx) / PASSO_DE_BUSCA_MM) + 1
         passos_y = int((self.profundidade - dy) / PASSO_DE_BUSCA_MM) + 1
@@ -268,3 +454,4 @@ class LayoutMesa:
         novos = {numero: indice for indice, numero in enumerate(self.arquivos(), start=1)}
         for item in self.itens:
             item.arquivo = novos[item.arquivo]
+        self.alturas = {novos[numero]: trocas for numero, trocas in self.alturas.items() if numero in novos}

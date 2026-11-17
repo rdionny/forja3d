@@ -3,22 +3,45 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tomllib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-RAIZ = Path(__file__).resolve().parents[2]
-PASTA_CONFIG = RAIZ / "config"
+EMPACOTADO = getattr(sys, "frozen", False)
+# Instalado, RAIZ é a pasta do programa e os dados que vão com ele ficam em `_internal`.
+RAIZ = Path(sys.executable).parent if EMPACOTADO else Path(__file__).resolve().parents[2]
+PASTA_CONFIG = Path(getattr(sys, "_MEIPASS", RAIZ)) / "config"
 ORCA_PADRAO = RAIZ / "ferramentas" / "OrcaSlicer_2.4.2" / "orca-slicer.exe"
 MODELO_IMAGEM_PADRAO = "gemini-3.1-flash-image"
 PROVEDOR_PADRAO = "Padrão"
 
 
+def _appdata_do_windows() -> str | None:
+    """Quem abre o servidor MCP, como o Codex, pode passar um ambiente sem APPDATA e sem a pasta do usuário. O Windows ainda sabe onde ela fica."""
+    if os.name != "nt":
+        return None
+    import ctypes
+
+    caminho = ctypes.create_unicode_buffer(260)
+    pasta_appdata = 0x1A
+    return caminho.value if ctypes.windll.shell32.SHGetFolderPathW(None, pasta_appdata, None, 0, caminho) == 0 else None
+
+
 def pasta_usuario() -> Path:
-    base = os.environ.get("APPDATA")
+    base = os.environ.get("APPDATA") or _appdata_do_windows()
     return (Path(base) if base else Path.home()) / "Forja3D"
+
+
+def pasta_projetos_padrao() -> Path:
+    """Instalado, as peças ficam em Documentos: desinstalar não pode levar o trabalho de ninguém."""
+    if not EMPACOTADO:
+        return RAIZ / "projetos"
+    from platformdirs import user_documents_dir
+
+    return Path(user_documents_dir()) / "Forja3D"
 
 
 @dataclass(frozen=True)
@@ -51,8 +74,14 @@ class Configuracao:
     max_chamadas_por_pedido: int = 25
     max_reparos_mesmo_erro: int = 3
     caminho_orca: Path = ORCA_PADRAO
-    pasta_projetos: Path = RAIZ / "projetos"
+    pasta_projetos: Path = field(default_factory=pasta_projetos_padrao)
     provedores: tuple[Provedor, ...] = ()
+    # Desligado, o servidor MCP recusa toda ferramenta, mesmo que o Codex ou o Claude ainda o abram.
+    mcp_ligado: bool = True
+
+    @property
+    def ia_configurada(self) -> bool:
+        return bool(self.ia.endpoint and self.ia.modelo)
 
     @property
     def todos_os_provedores(self) -> tuple[Provedor, ...]:
@@ -81,11 +110,16 @@ def _mesclar(base: dict[str, Any], novo: dict[str, Any]) -> dict[str, Any]:
     return resultado
 
 
+def _padroes() -> dict[str, Any]:
+    if EMPACOTADO:
+        # Nem olha para ia_padrao.toml: ali fica a chave de quem desenvolve.
+        return _ler_toml(PASTA_CONFIG / "ia_padrao.pacote.toml")
+    return _mesclar(_ler_toml(PASTA_CONFIG / "ia_padrao.example.toml"), _ler_toml(PASTA_CONFIG / "ia_padrao.toml"))
+
+
 def carregar() -> Configuracao:
     """Prioridade: variáveis de ambiente, preferências do usuário e padrões do projeto."""
-    dados = _ler_toml(PASTA_CONFIG / "ia_padrao.example.toml")
-    dados = _mesclar(dados, _ler_toml(PASTA_CONFIG / "ia_padrao.toml"))
-    dados = _mesclar(dados, _ler_toml(pasta_usuario() / "config.toml"))
+    dados = _mesclar(_padroes(), _ler_toml(pasta_usuario() / "config.toml"))
 
     ia = dict(dados.get("ia", {}))
     for variavel, chave in (
@@ -127,8 +161,9 @@ def carregar() -> Configuracao:
         max_chamadas_por_pedido=int(agente.get("max_chamadas_por_pedido", 25)),
         max_reparos_mesmo_erro=int(agente.get("max_reparos_mesmo_erro", 3)),
         caminho_orca=Path(app["caminho_orca"]) if app.get("caminho_orca") else ORCA_PADRAO,
-        pasta_projetos=Path(app["pasta_projetos"]) if app.get("pasta_projetos") else RAIZ / "projetos",
+        pasta_projetos=Path(app["pasta_projetos"]) if app.get("pasta_projetos") else pasta_projetos_padrao(),
         provedores=tuple(provedores),
+        mcp_ligado=dados.get("mcp", {}).get("ligado", True) is not False,
     )
 
 
@@ -142,6 +177,7 @@ def salvar_preferencias(
     provedores: Sequence[Provedor] = (),
     provedor: str = PROVEDOR_PADRAO,
     provedor_imagem: str = PROVEDOR_PADRAO,
+    mcp_ligado: bool = True,
 ) -> Path:
     """Grava as preferências da tela de configurações. `json.dumps` gera strings válidas em TOML.
 
@@ -161,6 +197,9 @@ def salvar_preferencias(
         "[app]",
         f"caminho_orca = {json.dumps(caminho_orca)}",
         f"pasta_projetos = {json.dumps(pasta_projetos)}",
+        "",
+        "[mcp]",
+        f"ligado = {'true' if mcp_ligado else 'false'}",
         "",
     ]
     for item in provedores:

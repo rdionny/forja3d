@@ -6,20 +6,31 @@ import json
 import logging
 import re
 import shutil
+import tempfile
 import threading
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import AfterValidator, BaseModel, Field, ValidationError
 
 from forja3d.agente.especificacao import Especificacao, problemas_de_tamanho
 from forja3d.cad.executor import executar_script
 from forja3d.conceitos.fluxo import mensagem_do_conceito
 from forja3d.configuracao import Configuracao
+from forja3d.fatiamento.cores import (
+    PALETA,
+    ErroDeCor,
+    aplicar_cores,
+    nome_da_cor,
+    roteiro_da_preparacao,
+    situacao_das_cores,
+)
 from forja3d.fatiamento.orca import ErroFatiamento, ParametrosFatiamento, fatiar_layout
 from forja3d.ia.cliente import Cancelado, ChamadaFerramenta, ClienteIA, ErroIA
-from forja3d.projetos.armazenamento import Projeto
+from forja3d.importacao.preparo import OpcoesDoModelo, gravar_parte, nome_da_parte
+from forja3d.importacao.separacao import Separacao
+from forja3d.projetos.armazenamento import Projeto, ligar_ou_copiar
 from forja3d.render.vistas import renderizar
 from forja3d.verificacao.verificador import verificar_peca
 
@@ -29,6 +40,8 @@ PASTA = Path(__file__).parent
 DEFINICOES: list[dict[str, Any]] = json.loads((PASTA / "ferramentas.json").read_text(encoding="utf-8"))
 PROMPT_SISTEMA = (PASTA.parent / "ia" / "prompts" / "agente_3d.md").read_text(encoding="utf-8")
 SEM_CALIBRACAO = "Sem dados de calibração ainda; use as tabelas."
+SCRIPT_SEM_PARTES = "# Esta versão só tem modelos importados: ainda não há script de CAD.\n"
+LEGENDA_DA_REFERENCIA = "[Sistema] Imagem de referência do usuário e imagem do conceito escolhido, nesta ordem."
 ROTULOS = {
     "especificacao": "Entendendo o pedido",
     "modelagem": "Modelando a peça",
@@ -52,6 +65,33 @@ class ArgsFatiar(BaseModel):
     brim: bool = False
 
 
+def _cor_da_paleta(nome: str) -> str:
+    paleta = dict(PALETA)
+    if nome.strip().lower() not in paleta:
+        raise ValueError(f"Use uma destas cores: {', '.join(paleta)}")
+    return paleta[nome.strip().lower()]
+
+
+CorDaPaleta = Annotated[str, AfterValidator(_cor_da_paleta)]
+
+
+class ArgsTrocaDeCor(BaseModel):
+    z_mm: float = Field(gt=0)
+    cor: CorDaPaleta
+
+
+class ArgsCorDoCorpo(BaseModel):
+    corpo: str
+    cor: CorDaPaleta
+
+
+class ArgsDefinirCores(BaseModel):
+    parte: str
+    cor: CorDaPaleta | None = None
+    trocas: list[ArgsTrocaDeCor] | None = None
+    corpos: list[ArgsCorDoCorpo] | None = None
+
+
 class Ouvinte:
     """Eventos do agente. A interface recebe isso em forma de sinais do Qt."""
 
@@ -60,6 +100,7 @@ class Ouvinte:
     def versao(self, versao: str) -> None: ...
     def verificacao(self, versao: str, resultado: dict[str, Any]) -> None: ...
     def fatiamento(self, versao: str, resumo: dict[str, Any]) -> None: ...
+    def cores(self, versao: str, arquivo: int) -> None: ...
 
 
 def _sem_imagens(mensagens: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -69,6 +110,11 @@ def _sem_imagens(mensagens: list[dict[str, Any]]) -> list[dict[str, Any]]:
             mensagem = {**mensagem, "content": "[Sistema] Imagens anteriores, removidas do histórico."}
         limpas.append(mensagem)
     return limpas
+
+
+def _tem_a_legenda(mensagem: dict[str, Any], legenda: str) -> bool:
+    conteudo = mensagem.get("content")
+    return isinstance(conteudo, list) and bool(conteudo) and conteudo[0].get("text") == legenda
 
 
 def _e_a_mensagem_do_pedido(mensagem: dict[str, Any], texto: str) -> bool:
@@ -174,6 +220,127 @@ class Orquestrador:
         """Uma versão sem verificação, como a que vem de um arquivo, passa pelo mesmo crivo de uma nova."""
         self._verificar({})
 
+    def so_importadas(self) -> bool:
+        """A versão atual tem só modelos baixados: não há script nem especificação para comparar."""
+        medidas = self.projeto.medidas(self.versao_atual) if self.versao_atual else []
+        return bool(medidas) and all(p.get("importada") for p in medidas)
+
+    def adicionar_modelo(self, origem: Path, opcoes: OpcoesDoModelo) -> dict[str, Any]:
+        """Um modelo baixado entra como parte de uma versão nova. Nada aqui passa pela IA, e o que já estava na mesa continua."""
+        self.ouvinte.etapa("Colocando o modelo na mesa")
+        anterior = self.projeto.medidas(self.versao_atual) if self.versao_atual else []
+        opcoes.nome = nome_da_parte(opcoes.nome, {p["nome"] for p in anterior})
+        pasta = self.projeto.pasta_temporaria()
+        script = self.projeto.pasta_versao(self.versao_atual) / "modelo.py" if self.versao_atual else None
+        if script and script.is_file():
+            shutil.copyfile(script, pasta / "script.py")
+        else:
+            (pasta / "script.py").write_text(SCRIPT_SEM_PARTES, encoding="utf-8")
+        self._trazer_partes(anterior, pasta)
+        parte = gravar_parte(origem, pasta, opcoes)
+
+        self.versao_atual = self.projeto.registrar_versao(
+            pasta, self.especificacao.model_dump() if self.especificacao else None, [*anterior, parte], f"Modelo importado: {parte['nome']}"
+        )
+        self.versao_aprovada = None
+        self.resultado_verificacao = None
+        self._salvar_estado()
+        self.ouvinte.versao(self.versao_atual)
+        self._verificar({})
+        x, y, z = parte["tamanho"]
+        self.mensagens.append(
+            {
+                "role": "user",
+                "content": (
+                    f"[Sistema] O usuário importou um modelo 3D baixado. Ele entrou na mesa como a parte {parte['nome']} ({x:g} x {y:g} x {z:g} mm), "
+                    f"na versão {self.versao_atual}. É uma malha pronta: você não tem script dela e não tem como alterá-la. "
+                    "Ela continua nas próximas versões sem aparecer no seu script, então não a recrie."
+                ),
+            }
+        )
+        self._salvar_historico()
+        self._salvar_estado()
+        return parte
+
+    def separar_cores(self, parte: str, separacao: Separacao) -> dict[str, Any]:
+        """Troca um modelo importado pelo corpo com os rebaixos e por uma parte nova para cada peça colorida. Nada aqui passa pela IA."""
+        self.ouvinte.etapa("Colocando as peças na mesa")
+        anterior = self.projeto.medidas(self.versao_atual)
+        original = next(p for p in anterior if p["nome"] == parte)
+        pasta = self.projeto.pasta_temporaria()
+        script = self.projeto.pasta_versao(self.versao_atual) / "modelo.py"
+        if script.is_file():
+            shutil.copyfile(script, pasta / "script.py")
+        else:
+            (pasta / "script.py").write_text(SCRIPT_SEM_PARTES, encoding="utf-8")
+        self._trazer_partes([p for p in anterior if p["nome"] != parte], pasta)
+        ocupados = {p["nome"] for p in anterior}
+        novas = []
+        # O que sai do corte é fechado por construção. A medida feita no STL pode ver buracos e corpos que não existem.
+        exato = {"corpos_fechados": True}
+        with tempfile.TemporaryDirectory(prefix="forja3d_separar_") as temporaria:
+            origem = Path(temporaria) / "malha.stl"
+            separacao.corpo.export(origem)
+            corpo = gravar_parte(origem, pasta, OpcoesDoModelo(parte, cores={"": original["cor"]} if original.get("cor") else {})) | exato | {"volume_mm3": separacao.volume_mm3, "solidos": separacao.solidos}
+            for peca in separacao.pecas:
+                nome = nome_da_parte(f"{parte}_{nome_da_cor(peca.cor)}", ocupados)
+                ocupados.add(nome)
+                peca.malha.export(origem)
+                novas.append(gravar_parte(origem, pasta, OpcoesDoModelo(nome, cores={"": peca.cor})) | exato | {"volume_mm3": peca.volume_mm3, "solidos": 1})
+
+        partes = [corpo if p["nome"] == parte else p for p in anterior] + novas
+        self.versao_atual = self.projeto.registrar_versao(pasta, self.especificacao.model_dump() if self.especificacao else None, partes, f"Cores separadas em {parte}")
+        # Cada cor em um arquivo: é isso que dispensa a troca de filamento no meio da impressão. A mesa é gravada antes de a tela saber da versão.
+        layout = self.projeto.layout(self.versao_atual, self.perfil)
+        medidas = self.projeto.medidas_por_parte(self.versao_atual)
+        for nova in novas:
+            aplicar_cores(layout, nova["nome"], medidas, nova["cor"])
+        self.projeto.salvar_layout(self.versao_atual, layout)
+        self.versao_aprovada = None
+        self.resultado_verificacao = None
+        self._salvar_estado()
+        self.ouvinte.versao(self.versao_atual)
+        self._verificar({})
+        self.mensagens.append(
+            {
+                "role": "user",
+                "content": (
+                    f"[Sistema] O usuário separou a parte {parte} em peças por cor, na versão {self.versao_atual}: {', '.join(p['nome'] for p in novas)}. "
+                    f"Cada uma imprime em um filamento só e encaixa em um rebaixo de {parte}. São malhas prontas: você não tem script delas e não tem como alterá-las."
+                ),
+            }
+        )
+        self._salvar_historico()
+        self._salvar_estado()
+        pecas = [{"nome": nova["nome"], "cor": peca.cor, "com_pino": peca.com_pino, "suporte": peca.precisa_de_suporte} for nova, peca in zip(novas, separacao.pecas)]
+        return {"parte": parte, "pecas": pecas}
+
+    def _trazer_partes(self, partes: list[dict[str, Any]], pasta: Path) -> None:
+        origem = self.projeto.pasta_versao(self.versao_atual) if self.versao_atual else None
+        for parte in partes:
+            for campo in ("stl", "step"):
+                if parte.get(campo) and (origem / parte[campo]).is_file():
+                    ligar_ou_copiar(origem / parte[campo], pasta / parte[campo])
+            for corpo in parte.get("corpos", []):
+                ligar_ou_copiar(origem / corpo["stl"], pasta / corpo["stl"])
+
+    def _importadas_para_a_nova_versao(self, pasta: Path, nomes_do_script: set[str]) -> list[dict[str, Any]]:
+        """O script só gera o que o agente desenhou. Os modelos baixados são trazidos da versão anterior."""
+        if not self.versao_atual:
+            return []
+        trazidas = []
+        origem = self.projeto.pasta_versao(self.versao_atual)
+        for parte in self.projeto.medidas(self.versao_atual):
+            if not parte.get("importada"):
+                continue
+            nome = nome_da_parte(parte["nome"], nomes_do_script)
+            arquivo = f"{nome}.stl"
+            ligar_ou_copiar(origem / parte["stl"], pasta / arquivo)
+            for corpo in parte.get("corpos", []):
+                ligar_ou_copiar(origem / corpo["stl"], pasta / corpo["stl"])
+            trazidas.append({**parte, "nome": nome, "stl": arquivo})
+        return trazidas
+
     def voltar_ao_pedido(self, numero: int) -> dict[str, Any]:
         """Tira da conversa esse pedido e tudo o que veio depois, e devolve o registro dele.
 
@@ -235,11 +402,24 @@ class Orquestrador:
             return self._atender(texto)
         x, y, z = dados["tamanho"]
         outras = ", ".join(p["nome"] for p in medidas if p["nome"] != parte) or "nenhuma"
+        origem = (
+            "Origem: modelo importado pelo usuário. É uma malha pronta: você não tem script dela e não tem como alterá-la. "
+            "Se o pedido exigir mudar a malha, explique isso e proponha outra saída, como uma peça nova que encaixe nela.\n"
+            if dados.get("importada")
+            else ""
+        )
+        posicao = (
+            "Na mesa: o usuário deitou esta parte. O tamanho e as vistas são da posição em que ela foi modelada.\n"
+            if any(i.tombo for i in self.projeto.layout(self.versao_atual, self.perfil).itens if i.parte == parte)
+            else ""
+        )
         mensagem = (
             "[PARTE SELECIONADA]\n"
             f"Parte: {parte}\n"
             f"Tamanho: {x:g} x {y:g} x {z:g} mm\n"
             f"Furos: {len(dados['furos'])}\n"
+            f"{origem}"
+            f"{posicao}"
             f"Outras partes, que devem continuar iguais: {outras}\n"
             f"Versão atual: {self.versao_atual}\n"
             f"Pedido: {texto}"
@@ -357,11 +537,12 @@ class Orquestrador:
 
     def _anexar_conceito_se_faltar(self) -> None:
         # As imagens não vão para o histórico em disco: depois de reabrir a peça, precisam voltar.
+        # Ter outra imagem no histórico não basta: as vistas de uma parte selecionada não mostram o que o usuário quer.
         conceito = self.projeto.conceito_escolhido()
-        if not conceito or any(isinstance(m.get("content"), list) for m in self.mensagens):
+        if not conceito or any(_tem_a_legenda(m, LEGENDA_DA_REFERENCIA) for m in self.mensagens):
             return
         conteudo = [
-            {"type": "text", "text": "[Sistema] Imagem de referência do usuário e imagem do conceito escolhido, nesta ordem."},
+            {"type": "text", "text": LEGENDA_DA_REFERENCIA},
             _parte_imagem(self.projeto.pasta / conceito["referencia"]),
             _parte_imagem(self.projeto.pasta / conceito["imagem"]),
         ]
@@ -375,6 +556,19 @@ class Orquestrador:
                 "Explique o problema ao usuário em linguagem simples e proponha alternativas."
             )
 
+    def executar_ferramenta(self, nome: str, argumentos: dict[str, Any]) -> tuple[dict[str, Any], list[Path]]:
+        """Para quem chama as ferramentas sem o loop da IA, como o servidor MCP. As travas são as mesmas."""
+        return self._executar(ChamadaFerramenta("externo", nome, json.dumps(argumentos)))
+
+    def registrar_trabalho_externo(self, texto: str) -> None:
+        """Um agente de fora mexeu na peça pelo MCP. O usuário vê no chat, e o agente do app não parte de um script velho."""
+        script = self.projeto.pasta_versao(self.versao_atual) / "modelo.py" if self.versao_atual else None
+        codigo = script.read_text(encoding="utf-8") if script and script.is_file() else ""
+        continuar = f" Daqui em diante, parta deste script:\n```python\n{codigo}\n```" if codigo and codigo != SCRIPT_SEM_PARTES else ""
+        self.mensagens.append({"role": "user", "content": f"[Sistema] Um agente externo, pelo MCP do Forja3D, {texto}.{continuar}"})
+        self._salvar_historico()
+        self.projeto.registrar_conversa("agente", f"Agente externo, pelo MCP: {texto}.")
+
     def _executar(self, chamada: ChamadaFerramenta) -> tuple[dict[str, Any], list[Path]]:
         try:
             argumentos = json.loads(chamada.argumentos or "{}")
@@ -385,6 +579,7 @@ class Orquestrador:
             "executar_cad": self._executar_cad,
             "verificar_peca": self._verificar,
             "renderizar_vistas": self._renderizar,
+            "definir_cores": self._definir_cores,
             "fatiar_peca": self._fatiar_ferramenta,
         }
         funcao = funcoes.get(chamada.nome)
@@ -421,7 +616,8 @@ class Orquestrador:
             self._proxima = "reparo"
             self._registrar_falha(f"{resultado.tipo_erro}: {resultado.erro}")
             return {"ok": False, "tipo": resultado.tipo_erro, "erro": resultado.erro, "linha": resultado.linha, "trecho": resultado.trecho}, []
-        versao = self.projeto.registrar_versao(pasta, self.especificacao.model_dump(), resultado.partes, dados.resumo_alteracao)
+        partes = [*resultado.partes, *self._importadas_para_a_nova_versao(pasta, {p["nome"] for p in resultado.partes})]
+        versao = self.projeto.registrar_versao(pasta, self.especificacao.model_dump(), partes, dados.resumo_alteracao)
         self.versao_atual = versao
         self.versao_aprovada = None
         self.resultado_verificacao = None
@@ -434,12 +630,12 @@ class Orquestrador:
             "versao": versao,
             "partes": [
                 {k: p[k] for k in ("nome", "tamanho", "solidos", "volume_mm3", "valido")} | {"furos": len(p["furos"])}
-                for p in resultado.partes
+                for p in partes
             ],
         }, []
 
     def _verificar(self, _argumentos: dict[str, Any]) -> tuple[dict[str, Any], list[Path]]:
-        if not self.versao_atual or self.especificacao is None:
+        if not self.versao_atual or (self.especificacao is None and not self.so_importadas()):
             return {"ok": False, "erro": "Ainda não há versão para verificar. Chame executar_cad."}, []
         self.ouvinte.etapa("Verificando medidas e imprimibilidade")
         pasta = self.projeto.pasta_versao(self.versao_atual)
@@ -470,6 +666,37 @@ class Orquestrador:
         self._proxima = "critica_visual"
         return {"ok": True, "vistas": [i.stem for i in imagens]}, imagens
 
+    def _definir_cores(self, argumentos: dict[str, Any]) -> tuple[dict[str, Any], list[Path]]:
+        dados = ArgsDefinirCores.model_validate(argumentos)
+        if not self.versao_atual:
+            return {"ok": False, "erro": "Ainda não há peça para colorir. Chame executar_cad."}, []
+        medidas = self.projeto.medidas_por_parte(self.versao_atual)
+        if dados.parte not in medidas:
+            return {"ok": False, "erro": f"Não existe a parte {dados.parte}. As partes são: {', '.join(medidas)}."}, []
+        self.ouvinte.etapa("Aplicando as cores")
+        layout = self.projeto.layout(self.versao_atual, self.perfil)
+        antes = {i.arquivo for i in layout.itens if i.parte == dados.parte}
+        trocas = None if dados.trocas is None else [{"z": t.z_mm, "cor": t.cor} for t in dados.trocas]
+        corpos = None if dados.corpos is None else {c.corpo: c.cor for c in dados.corpos}
+        muda = dados.cor is not None or trocas is not None or corpos is not None
+        camada = float(self.perfil["qualidades"]["padrao"]["camada_mm"])
+        try:
+            if muda:
+                aplicar_cores(layout, dados.parte, medidas, dados.cor, corpos, trocas)
+            situacao = situacao_das_cores(layout, dados.parte, medidas, self.projeto.stls_por_parte(self.versao_atual)[dados.parte], camada)
+        except ErroDeCor as erro:
+            self._registrar_falha(f"cores {erro}")
+            return {"ok": False, "erro": str(erro)}, []
+        self._proxima = "conversa"
+        if not muda:
+            return {"ok": True, **situacao}, []
+        self.projeto.salvar_layout(self.versao_atual, layout)
+        # As pausas entram no G-code: o que sai agora é outra impressão, e quem libera é o usuário.
+        self.versao_aprovada = None
+        self._salvar_estado()
+        self.ouvinte.cores(self.versao_atual, situacao["arquivos"][0]["numero"])
+        return {"ok": True, **situacao, "mudou_de_arquivo": {a["numero"] for a in situacao["arquivos"]} != antes}, []
+
     def _fatiar_ferramenta(self, argumentos: dict[str, Any]) -> tuple[dict[str, Any], list[Path]]:
         dados = ArgsFatiar.model_validate(argumentos)
         if not self.versao_atual or self.versao_aprovada != self.versao_atual:
@@ -481,7 +708,8 @@ class Orquestrador:
             resumo = self.fatiar(ParametrosFatiamento(**dados.model_dump()))
         except ErroFatiamento as erro:
             return {"ok": False, "erro": str(erro)}, []
-        return {"ok": True, **resumo["validacao"]}, []
+        roteiro = roteiro_da_preparacao(resumo)
+        return {"ok": True, **resumo["validacao"], **({"roteiro_de_cores": roteiro} if roteiro else {})}, []
 
     def fatiar(self, parametros: ParametrosFatiamento) -> dict[str, Any]:
         """Determinístico. Exige uma versão aprovada pelo usuário e sem bloqueios."""
@@ -497,9 +725,11 @@ class Orquestrador:
             self.projeto.pasta_impressao(versao, parametros.material, parametros.qualidade),
             self.config.caminho_orca,
             self._cancelar,
+            self.projeto.medidas_por_parte(versao),
         )
         self.ouvinte.fatiamento(versao, resumo)
         validacao = resumo["validacao"]
+        roteiro = roteiro_da_preparacao(resumo)
         self.mensagens.append(
             {
                 "role": "user",
@@ -507,6 +737,7 @@ class Orquestrador:
                     f"[Sistema] Versão {versao} fatiada em {parametros.material}, qualidade {parametros.qualidade}: "
                     f"{validacao.get('tempo', '?')}, {validacao.get('filamento_g', '?')} g, "
                     f"validação {'aprovada' if validacao['aprovado'] else 'reprovada'}."
+                    + (f"\nRoteiro de cores:\n{roteiro}" if roteiro else "")
                 ),
             }
         )

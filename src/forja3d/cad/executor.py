@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from forja3d.cad.seguranca_ast import CodigoRecusado, validar_codigo
-from forja3d.configuracao import RAIZ
+from forja3d.configuracao import EMPACOTADO, RAIZ
 from forja3d.ia.cliente import Cancelado
 
 SEM_JANELA = 0x08000000 if os.name == "nt" else 0
@@ -25,7 +25,8 @@ VARIAVEIS_PERMITIDAS = (
 def ambiente_limpo() -> dict[str, str]:
     """Só o necessário. A chave da API e as variáveis do Forja3D nunca chegam aos processos auxiliares."""
     ambiente = {nome: os.environ[nome] for nome in VARIAVEIS_PERMITIDAS if nome in os.environ}
-    ambiente["PYTHONPATH"] = str(RAIZ / "src")
+    if not EMPACOTADO:
+        ambiente["PYTHONPATH"] = str(RAIZ / "src")
     ambiente["PYTHONIOENCODING"] = "utf-8"
     ambiente["PYTHONUTF8"] = "1"
     return ambiente
@@ -33,7 +34,7 @@ def ambiente_limpo() -> dict[str, str]:
 
 def comando_auxiliar(argumento: str, *resto: str) -> list[str]:
     # Em app empacotado, sys.executable é o próprio aplicativo.
-    if getattr(sys, "frozen", False):
+    if EMPACOTADO:
         return [sys.executable, argumento, *resto]
     executavel = Path(sys.executable)
     # pythonw não tem console: os auxiliares usam python.exe, escondido por SEM_JANELA.

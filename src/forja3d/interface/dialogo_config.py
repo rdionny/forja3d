@@ -8,6 +8,8 @@ from typing import Any
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -17,6 +19,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -25,6 +28,7 @@ from PySide6.QtWidgets import (
 from forja3d import configuracao
 from forja3d.configuracao import PROVEDOR_PADRAO, ConfigIA, Configuracao, Provedor
 from forja3d.ia.cliente import ClienteIA, ErroIA, eh_modelo_de_imagem
+from forja3d.mcp import clientes
 
 log = logging.getLogger(__name__)
 
@@ -74,6 +78,8 @@ class DialogoConfig(QDialog):
 
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
+        if not config.ia_configurada:
+            layout.addWidget(QLabel("Para começar, informe o endpoint e a chave do seu provedor de IA, clique em Testar conexão e escolha o modelo do chat.", wordWrap=True))
         layout.addWidget(QLabel("MODELOS", objectName="titulo"))
         layout.addLayout(self._montar_modelos())
         layout.addSpacing(6)
@@ -82,6 +88,9 @@ class DialogoConfig(QDialog):
         layout.addSpacing(6)
         layout.addWidget(QLabel("APLICATIVO", objectName="titulo"))
         layout.addLayout(self._montar_aplicativo())
+        layout.addSpacing(6)
+        layout.addWidget(QLabel("AGENTES DE FORA (MCP)", objectName="titulo"))
+        layout.addLayout(self._montar_mcp())
 
         self.rotulo_erro = QLabel("", objectName="erro", wordWrap=True)
         self.rotulo_erro.hide()
@@ -169,6 +178,40 @@ class DialogoConfig(QDialog):
         self.campo_projetos = QLineEdit(str(self.config.pasta_projetos))
         formulario.addRow("Pasta das peças", self._com_procurar(self.campo_projetos, self._procurar_pasta))
         return formulario
+
+    def _montar_mcp(self) -> QVBoxLayout:
+        coluna = QVBoxLayout()
+        coluna.setSpacing(6)
+        self.caixa_mcp = QCheckBox("Deixar o Codex e o Claude modelarem pelo Forja3D (servidor MCP)", checked=self.config.mcp_ligado)
+        self.caixa_mcp.toggled.connect(self._atualizar_estado_do_mcp)
+        coluna.addWidget(self.caixa_mcp)
+        self.rotulo_mcp = QLabel("", objectName="suave", wordWrap=True)
+        coluna.addWidget(self.rotulo_mcp)
+        linha = QHBoxLayout()
+        self.botao_claude = QPushButton("Copiar o comando do Claude Code")
+        self.botao_claude.setToolTip(clientes.comando_do_claude_code())
+        self.botao_claude.clicked.connect(self._copiar_comando_do_claude)
+        linha.addWidget(self.botao_claude)
+        linha.addStretch(1)
+        coluna.addLayout(linha)
+        self._atualizar_estado_do_mcp()
+        return coluna
+
+    def _atualizar_estado_do_mcp(self) -> None:
+        estado = clientes.estado_no_codex()
+        ligar = self.caixa_mcp.isChecked()
+        if estado == "ausente":
+            codex = "O Codex não foi encontrado neste computador."
+        elif ligar:
+            codex = "Codex: já ligado." if estado == "ligado" else "Codex: ao salvar, o Forja3D entra na configuração do Codex."
+        else:
+            codex = "Codex: ao salvar, o Forja3D sai da configuração do Codex." if estado != "desligado" else "Codex: desligado."
+        protecao = "Eles não aprovam nem exportam o G-code: isso continua sendo só seu." if ligar else "Desligado, o servidor recusa tudo, mesmo que o Codex ou o Claude ainda o abram."
+        self.rotulo_mcp.setText(f"{codex} {protecao}")
+
+    def _copiar_comando_do_claude(self) -> None:
+        QApplication.clipboard().setText(clientes.comando_do_claude_code())
+        self.rotulo_mcp.setText("Comando copiado. Cole no terminal, com o Claude Code instalado, e abra uma conversa nova nele.")
 
     def _com_procurar(self, campo: QLineEdit, acao: Callable[[], None]) -> QHBoxLayout:
         linha = QHBoxLayout()
@@ -385,5 +428,18 @@ class DialogoConfig(QDialog):
             provedores=[p for p in limpos if p.nome != PROVEDOR_PADRAO],
             provedor=limpos[self.seletor_chat.combo_provedor.currentIndex()].nome,
             provedor_imagem=limpos[self.seletor_imagem.combo_provedor.currentIndex()].nome,
+            mcp_ligado=self.caixa_mcp.isChecked(),
         )
+        self._aplicar_no_codex()
         self.accept()
+
+    def _aplicar_no_codex(self) -> None:
+        """As preferências já estão salvas: um problema no arquivo do Codex só vira aviso."""
+        ligar = self.caixa_mcp.isChecked()
+        estado = clientes.estado_no_codex()
+        if estado == "ausente" or (estado == "ligado" and ligar) or (estado == "desligado" and not ligar):
+            return
+        try:
+            log.info(clientes.ligar_no_codex(ligar))
+        except (clientes.ErroNoCodex, OSError) as erro:
+            QMessageBox.warning(self, "Codex", str(erro))
