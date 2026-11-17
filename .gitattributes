@@ -1,0 +1,7 @@
+# Os dados pessoais vão para o ramo dados-pessoais byte a byte: sem isto, o git trocaria
+# as quebras de linha dos G-codes e dos JSON das peças ao guardar e ao trazer de volta.
+/projetos/** -text
+/saida/** -text
+/config/ia_padrao.toml -text
+/PLANEJAMENTO.md -text
+/PROMPT_DESENVOLVIMENTO.md -text
