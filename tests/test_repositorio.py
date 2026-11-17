@@ -21,6 +21,7 @@ def git(*argumentos: str) -> subprocess.CompletedProcess:
         "saida/",
         "projetos/",
         "config/ia_padrao.toml",
+        "config/config_do_app.toml",
         "PLANEJAMENTO.md",
         "PROMPT_DESENVOLVIMENTO.md",
         "src/forja3d/__pycache__/",

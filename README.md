@@ -28,19 +28,21 @@ Copie `config/ia_padrao.example.toml` para `config/ia_padrao.toml` e preencha a 
 
 ### Em outra máquina, com tudo o que há nesta
 
-O repositório `rdionny/forja3d` é privado e tem dois ramos que se completam. O ramo do código não leva a chave da API nem as suas peças. O ramo `dados-pessoais` guarda só o que fica fora do git de propósito: `config/ia_padrao.toml`, com a chave, `PLANEJAMENTO.md` e `PROMPT_DESENVOLVIMENTO.md`, que citam a chave, e as pastas `projetos/` e `saida/`.
+O repositório `rdionny/forja3d` é privado e tem dois ramos que se completam. O ramo do código não leva a chave da API nem as suas peças. O ramo `dados-pessoais` guarda só o que fica fora do git de propósito: `config/ia_padrao.toml`, com a chave, `config/config_do_app.toml`, que é a cópia da configuração do app, `PLANEJAMENTO.md` e `PROMPT_DESENVOLVIMENTO.md`, que citam a chave, e as pastas `projetos/` e `saida/`.
 
 ```powershell
 git clone https://github.com/rdionny/forja3d.git
 cd forja3d
-git restore --source=origin/dados-pessoais --worktree -- config/ia_padrao.toml PLANEJAMENTO.md PROMPT_DESENVOLVIMENTO.md projetos saida
+git restore --source=origin/dados-pessoais --worktree -- config/ia_padrao.toml config/config_do_app.toml PLANEJAMENTO.md PROMPT_DESENVOLVIMENTO.md projetos saida
+New-Item -ItemType Directory -Force "$env:APPDATA\Forja3D" | Out-Null
+Copy-Item config\config_do_app.toml "$env:APPDATA\Forja3D\config.toml"
 py -3.11 -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.lock
 .venv\Scripts\python.exe scriptsaixar_orca.py
 ```
 
 - **O que não vai para o GitHub:** `.venv/`, `build/` e `dist/`, que os comandos acima e `scripts\gerar_instalador.py` refazem, e `ferramentas/`, que `scriptsaixar_orca.py` baixa do site oficial e confere pelo SHA-256. O OrcaSlicer tem arquivos acima do limite de 100 MB do GitHub.
-- **Configuração do app:** os provedores de IA e as chaves que você cadastrou em **Configurações** ficam em `%APPDATA%\Forja3D\config.toml`, fora desta pasta. Copie esse arquivo para a outra máquina, ou cadastre de novo.
+- **Configuração do app:** os provedores de IA e as chaves que você cadastrou em **Configurações** ficam em `%APPDATA%\Forja3D\config.toml`, fora desta pasta. `config/config_do_app.toml` é uma cópia desse arquivo, e os dois últimos comandos acima a põem no lugar. Ela guarda os caminhos desta máquina: se a pasta do projeto for outra, acerte **OrcaSlicer** e **Pasta das peças** em **Configurações**.
 - **Para guardar peças novas:** o ramo `dados-pessoais` é uma foto do dia em que foi enviado. Ele não acompanha as peças que você criar depois.
 - **Nunca torne este repositório público:** o ramo `dados-pessoais` tem a sua chave. Para publicar o programa, envie só o ramo do código para outro repositório.
 

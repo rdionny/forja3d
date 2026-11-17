@@ -3,5 +3,6 @@
 /projetos/** -text
 /saida/** -text
 /config/ia_padrao.toml -text
+/config/config_do_app.toml -text
 /PLANEJAMENTO.md -text
 /PROMPT_DESENVOLVIMENTO.md -text
