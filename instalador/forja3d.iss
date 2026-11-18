@@ -55,3 +55,11 @@ Root: HKA; Subkey: "Software\Classes\Forja3D.Projeto\shell\open\command"; ValueT
 
 [Run]
 Filename: "{app}\Forja3D.exe"; Description: "{cm:LaunchProgram,Forja3D}"; Flags: nowait postinstall skipifsilent
+; A atualização pelo próprio app instala em silêncio e pede, com /abrir=1, para o app abrir de novo no fim.
+Filename: "{app}\Forja3D.exe"; Flags: nowait; Check: AbrirDepois
+
+[Code]
+function AbrirDepois: Boolean;
+begin
+  Result := ExpandConstant('{param:abrir|0}') = '1';
+end;

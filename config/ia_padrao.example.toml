@@ -17,3 +17,7 @@ critica_visual = "low"
 [agente]
 max_chamadas_por_pedido = 25
 max_reparos_mesmo_erro = 3
+
+# A página de downloads, na rede de casa, em que o app instalado procura versões novas.
+[atualizacao]
+endereco = "http://192.168.10.12:8000"

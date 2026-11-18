@@ -6,7 +6,7 @@ Descreva uma peça em português, e um agente de IA projeta, verifica e prepara 
 
 ## Como instalar
 
-Baixe a versão mais nova em [Releases](https://github.com/rdionny/forja3d/releases): `Forja3D-0.2.0-instalador.exe` para Windows ou `Forja3D-0.2.0-linux-x64.tar.gz` para Linux. No Linux, veja **No Linux**, mais abaixo.
+Na rede de casa, abra a página de downloads, em http://192.168.10.12:8000, e clique no botão do seu sistema. A página fica neste computador: veja **Página de downloads e atualizações**, mais abaixo. Quem tem acesso ao GitHub também acha os mesmos arquivos em [Releases](https://github.com/rdionny/forja3d/releases): `Forja3D-<versão>-instalador.exe` para Windows ou `Forja3D-<versão>-linux-x64.tar.gz` para Linux. No Linux, veja **No Linux**, mais abaixo.
 
 No Windows, rode o instalador. Não precisa de Python nem de permissão de administrador: o programa fica só no seu usuário, em `%LOCALAPPDATA%\Programs\Forja3D`, com o OrcaSlicer junto.
 
@@ -17,9 +17,11 @@ No Windows, rode o instalador. Não precisa de Python nem de permissão de admin
 
 Suas peças ficam em `Documentos\Forja3D`, e a configuração, com a chave, em `%APPDATA%\Forja3D`. Desinstalar não apaga essas pastas: apague-as à mão se quiser remover tudo.
 
+**Atualizações:** a partir da 0.2.1, o app instalado procura uma versão nova na página de downloads toda vez que abre. Se houver, mostra as novidades e o botão **Atualizar agora**. O app baixa a versão nova, confere o SHA-256 publicado na página, instala e abre de novo, com as suas peças e configurações. No Windows, quem instala é o próprio instalador, em silêncio. No Linux, o app troca a pasta dele pela nova, então ele precisa poder escrever nela. Fora de casa, ou com a página fechada, o app abre normalmente e só deixa de avisar. O endereço fica em **Configurações > Atualizações**: se o IP deste computador mudar, acerte ali, ou reserve o IP no roteador. Pelo código, quem atualiza é o `git pull`.
+
 ## Como abrir pelo código
 
-Dê dois cliques em `Abrir Forja3D.bat`. O canto direito da barra de baixo mostra a versão e a data da atualização, como "Forja3D 0.2.0, atualização de 17/11/2026 23:04". Pelo código, a data é a do arquivo mudado por último. Se o código mudou depois que a janela abriu, feche e abra de novo.
+Dê dois cliques em `Abrir Forja3D.bat`. O canto direito da barra de baixo mostra a versão e a data da atualização, como "Forja3D 0.2.1, atualização de 18/11/2026 01:04". Pelo código, a data é a do arquivo mudado por último. Se o código mudou depois que a janela abriu, feche e abra de novo.
 
 Em uma máquina nova:
 
@@ -54,10 +56,10 @@ py -3.11 -m venv .venv
 
 A cada envio, o GitHub Actions roda a suíte inteira no Ubuntu e no Windows. O pacote do Linux é testado fazendo o CAD e a verificação de um cubo. Ninguém abriu a janela em um Linux com tela de verdade ainda: os testes rodam sem tela.
 
-**Pacote pronto**, para Ubuntu 22.04 ou mais novo, em x64: baixe `Forja3D-0.2.0-linux-x64.tar.gz` em [Releases](https://github.com/rdionny/forja3d/releases).
+**Pacote pronto**, para Ubuntu 22.04 ou mais novo, em x64: baixe `Forja3D-<versão>-linux-x64.tar.gz` na página de downloads ou em [Releases](https://github.com/rdionny/forja3d/releases).
 
 ```bash
-tar -xzf Forja3D-0.2.0-linux-x64.tar.gz
+tar -xzf Forja3D-0.2.1-linux-x64.tar.gz
 ./Forja3D/Forja3D
 ```
 
@@ -81,6 +83,7 @@ Nos dois casos, instale os pacotes do sistema: `sudo apt install libegl1 libxcb-
 | Fatiar | O OrcaSlicer não vem junto. Baixe o AppImage da [versão 2.4.2](https://github.com/SoftFever/OrcaSlicer/releases/tag/v2.4.2), dê permissão de execução (`chmod +x`) e indique o arquivo em **Configurações > OrcaSlicer**. Os testes que fatiam de verdade só rodam no Windows |
 | Exportar para o cartão SD | O app não sugere o cartão: escolha a pasta dele na janela de salvar |
 | Limite de 4 GB de memória do CAD | Só no Windows. No Linux, um script da IA que gaste memória demais não é interrompido |
+| Atualização pelo app | Troca a pasta do app pela nova: extraia o pacote numa pasta em que você possa escrever, como a sua pasta pessoal |
 | Instalador e `scripts/baixar_orca.py` | Só no Windows |
 
 A configuração fica em `~/Forja3D/config.toml`. Pelo pacote, as peças ficam na pasta Documentos, em `Forja3D`. Se o app não abrir, a mensagem aparece no terminal e os detalhes ficam em `~/Forja3D/logs/falha_ao_abrir.txt`.
@@ -89,7 +92,7 @@ A configuração fica em `~/Forja3D/config.toml`. Pelo pacote, as peças ficam n
 
 1. Descreva a peça na conversa, com as medidas que tiver. Para falar em vez de digitar, clique no **microfone** ao lado de **Enviar**, fale e clique no quadrado: o texto transcrito aparece no campo, para você revisar antes de enviar. O endereço do servidor de transcrição, compatível com a OpenAI e sem chave, fica em **Configurações > Transcrição de áudio**.
 2. Acompanhe a peça no visualizador e a verificação abaixo da conversa. Peça ajustes pelo chat.
-3. Escolha material, qualidade, paredes e preenchimento, e clique em **Aprovar e preparar**.
+3. Escolha material, qualidade, paredes e preenchimento, e clique em **Aprovar e preparar**. Logo abaixo ficam **Bico**, **Mesa**, **Ventoinha** e **Velocidade**, já com os valores do material: mude antes de preparar, se precisar. Trocar o material traz os valores dele, e **Padrão do material** desfaz os ajustes. O PLA vem com bico em 240 °C e mesa em 65 °C, que seguraram a primeira camada nesta impressora. A ventoinha é a velocidade máxima, e a velocidade é em relação à da qualidade escolhida.
 4. Clique em **Exportar G-code** e salve no **cartão SD**. A impressora não lê pen drive. Com a impressora ligada no cabo USB, dá também para clicar em **Imprimir pela USB**: veja [Imprimir pela USB](#imprimir-pela-usb).
 
 ### Na mesa
@@ -309,7 +312,18 @@ O resultado fica em `dist\instalador\`. O script faz, em ordem:
 
 Para gerar só o pacote, sem o Inno Setup, use `--sem-instalador`.
 
-**Pelo GitHub:** suba a versão em `pyproject.toml` e em `src/forja3d/versao.py`, escreva as novidades em `.github/notas_da_versao.md` e envie uma tag, como `git tag v0.2.0` seguido de `git push origin v0.2.0`. O workflow `.github/workflows/release.yml` cria o release, roda este mesmo script no Windows e anexa o instalador. Ele também empacota o Linux com o mesmo spec, procura segredos, testa o executável e anexa o `.tar.gz`. Lá não existe `config/ia_padrao.toml`, então a chave não tem como entrar nos pacotes.
+**Pelo GitHub:** suba a versão em `pyproject.toml` e em `src/forja3d/versao.py`, escreva as novidades em `.github/notas_da_versao.md` e envie uma tag, como `git tag v0.2.1` seguido de `git push origin v0.2.1`. O workflow `.github/workflows/release.yml` cria o release, roda este mesmo script no Windows e anexa o instalador. Ele também empacota o Linux com o mesmo spec, procura segredos, testa o executável e anexa o `.tar.gz`. Lá não existe `config/ia_padrao.toml`, então a chave não tem como entrar nos pacotes. Para refazer só um dos pacotes de um release, dispare o workflow à mão, com a tag e o pacote.
+
+### Página de downloads e atualizações
+
+A página fica neste computador, numa pasta servida na rede de casa. Quando o release estiver pronto no GitHub, publique a versão nela:
+
+```powershell
+.venv\Scripts\python.exe scripts\publicar_na_pagina.py v0.2.1
+.venv\Scripts\python.exe -m http.server 8000 --directory "$env:USERPROFILE\Downloads\Forja3D-downloads"
+```
+
+O primeiro comando baixa os dois pacotes do release com o `gh`, refaz `index.html` com os botões e grava `atualizacao.json`, com a versão, as novidades e o SHA-256 de cada pacote. É esse arquivo que os apps instalados procuram ao abrir. As versões antigas saem da pasta. O segundo deixa a página no ar em http://192.168.10.12:8000, enquanto o terminal estiver aberto. Na primeira vez, permita o Python no firewall só para redes privadas. A página usa HTTP sem criptografia: quem estiver na mesma rede poderia, em tese, se passar por ela. Por isso ela fica só na rede de casa.
 
 - **Ícone e logo:** os desenhos ficam em `src/forja3d/interface/icones/`. O ícone do exe, do instalador e dos arquivos `.forja3d` sai de `forja3d.svg`, `forja3d_medio.svg` e `forja3d_pequeno.svg`, um para cada faixa de tamanho, e a tela de abertura usa `logo.svg`.
 - **O que entra:** o que não é código está em `instalador/lista_do_pacote.py`, uma lista branca. A pasta `config` inteira levaria a chave. O instalador usa `config/ia_padrao.pacote.toml`, sem endpoint, chave nem modelo.

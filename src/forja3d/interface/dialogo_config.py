@@ -184,6 +184,12 @@ class DialogoConfig(QDialog):
             toolTip="Servidor compatível com a OpenAI (/audio/transcriptions) que transforma o áudio do microfone em texto. Não precisa de chave.",
         )
         formulario.addRow("Transcrição de áudio", self.campo_transcricao)
+        self.campo_atualizacao = QLineEdit(
+            self.config.atualizacao,
+            placeholderText="http://192.168.10.12:8000",
+            toolTip="Página de downloads em que o app instalado procura versões novas ao abrir. Vazio, não procura.",
+        )
+        formulario.addRow("Atualizações", self.campo_atualizacao)
         return formulario
 
     def _montar_mcp(self) -> QVBoxLayout:
@@ -439,6 +445,7 @@ class DialogoConfig(QDialog):
             provedor_imagem=limpos[self.seletor_imagem.combo_provedor.currentIndex()].nome,
             mcp_ligado=self.caixa_mcp.isChecked(),
             transcricao=self.campo_transcricao.text().strip().rstrip("/"),
+            atualizacao=self.campo_atualizacao.text().strip().rstrip("/"),
         )
         self._aplicar_no_codex()
         self.accept()

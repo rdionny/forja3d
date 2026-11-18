@@ -163,4 +163,11 @@ def executar(arquivo: Path | None = None) -> int:
     abertura.finish(janela)
     for pedido in pedidos:
         janela.receber_pedido(pedido)
+    # Pelo código, quem atualiza é o git.
+    if configuracao.EMPACOTADO and config.atualizacao:
+        from forja3d.interface.dialogo_atualizacao import ProcuraDeAtualizacao, oferecer
+
+        procura = ProcuraDeAtualizacao(janela)
+        procura.encontrada.connect(lambda novidade: oferecer(janela, novidade, config.atualizacao))
+        procura.iniciar(config.atualizacao)
     return aplicativo.exec()

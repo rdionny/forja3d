@@ -80,6 +80,8 @@ class Configuracao:
     mcp_ligado: bool = True
     # Endereço compatível com a OpenAI que transforma o áudio do microfone em texto. Vazio, o microfone só avisa.
     transcricao: str = ""
+    # A página de downloads em que o app instalado procura versões novas. Vazio, não procura.
+    atualizacao: str = ""
 
     @property
     def ia_configurada(self) -> bool:
@@ -167,6 +169,7 @@ def carregar() -> Configuracao:
         provedores=tuple(provedores),
         mcp_ligado=dados.get("mcp", {}).get("ligado", True) is not False,
         transcricao=str(dados.get("transcricao", {}).get("endpoint", "")).rstrip("/"),
+        atualizacao=str(dados.get("atualizacao", {}).get("endereco", "")).rstrip("/"),
     )
 
 
@@ -182,6 +185,7 @@ def salvar_preferencias(
     provedor_imagem: str = PROVEDOR_PADRAO,
     mcp_ligado: bool = True,
     transcricao: str = "",
+    atualizacao: str = "",
 ) -> Path:
     """Grava as preferências da tela de configurações. `json.dumps` gera strings válidas em TOML.
 
@@ -207,6 +211,9 @@ def salvar_preferencias(
         "",
         "[transcricao]",
         f"endpoint = {json.dumps(transcricao)}",
+        "",
+        "[atualizacao]",
+        f"endereco = {json.dumps(atualizacao)}",
         "",
     ]
     for item in provedores:
