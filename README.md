@@ -2,9 +2,13 @@
 
 Descreva uma peça em português, e um agente de IA projeta, verifica e prepara o G-code para a **Creality Ender-3 V3 SE com bico de 0,4 mm**.
 
+![A janela do Forja3D: a lista de peças e versões à esquerda, a peça na mesa no centro, a conversa com o agente e a verificação à direita](docs/imagens/janela_principal.png)
+
 ## Como instalar
 
-Rode `Forja3D-0.1.0-instalador.exe`. Não precisa de Python nem de permissão de administrador: o programa fica só no seu usuário, em `%LOCALAPPDATA%\Programs\Forja3D`, com o OrcaSlicer junto.
+Baixe a versão mais nova em [Releases](https://github.com/rdionny/forja3d/releases): `Forja3D-0.2.0-instalador.exe` para Windows ou `Forja3D-0.2.0-linux-x64.tar.gz` para Linux. No Linux, veja **No Linux**, mais abaixo.
+
+No Windows, rode o instalador. Não precisa de Python nem de permissão de administrador: o programa fica só no seu usuário, em `%LOCALAPPDATA%\Programs\Forja3D`, com o OrcaSlicer junto.
 
 - **Aviso do Windows:** o instalador não tem assinatura digital, então o SmartScreen pode dizer que protegeu o computador. Se você confia em quem mandou o arquivo, clique em **Mais informações** e em **Executar assim mesmo**.
 - **Primeiro uso:** o app abre em **Configurações**. Informe o endpoint e a chave do seu provedor de IA, clique em **Testar conexão** e escolha o modelo. O provedor precisa ser compatível com a API da OpenAI. Se cancelar, o app abre sem a IA, e dá para configurar depois pelo ícone de engrenagem.
@@ -15,7 +19,7 @@ Suas peças ficam em `Documentos\Forja3D`, e a configuração, com a chave, em `
 
 ## Como abrir pelo código
 
-Dê dois cliques em `Abrir Forja3D.bat`. O canto direito da barra de baixo mostra a versão e a data da atualização, como "Forja3D 0.1.0, atualização de 03/11/2026 23:04". Pelo código, a data é a do arquivo mudado por último. Se o código mudou depois que a janela abriu, feche e abra de novo.
+Dê dois cliques em `Abrir Forja3D.bat`. O canto direito da barra de baixo mostra a versão e a data da atualização, como "Forja3D 0.2.0, atualização de 17/11/2026 23:04". Pelo código, a data é a do arquivo mudado por último. Se o código mudou depois que a janela abriu, feche e abra de novo.
 
 Em uma máquina nova:
 
@@ -48,7 +52,16 @@ py -3.11 -m venv .venv
 
 ### No Linux
 
-Ainda não foi testado em Linux. O código trata o Windows à parte nos pontos em que precisa, então deve abrir, mas ninguém conferiu.
+A cada envio, o GitHub Actions roda a suíte inteira no Ubuntu e no Windows. O pacote do Linux é testado fazendo o CAD e a verificação de um cubo. Ninguém abriu a janela em um Linux com tela de verdade ainda: os testes rodam sem tela.
+
+**Pacote pronto**, para Ubuntu 22.04 ou mais novo, em x64: baixe `Forja3D-0.2.0-linux-x64.tar.gz` em [Releases](https://github.com/rdionny/forja3d/releases).
+
+```bash
+tar -xzf Forja3D-0.2.0-linux-x64.tar.gz
+./Forja3D/Forja3D
+```
+
+**Pelo código:**
 
 ```bash
 python3.11 -m venv .venv
@@ -56,7 +69,21 @@ python3.11 -m venv .venv
 ./abrir_forja3d.sh
 ```
 
-Instale o OrcaSlicer 2.4.2 para Linux e indique o executável dele em **Configurações**, digitando o caminho. O que se sabe que é só de Windows: o instalador, `scripts/baixar_orca.py`, ouvir as mensagens em voz alta e o aviso que faz a janela reler a peça mudada pelo MCP.
+Nos dois casos, instale os pacotes do sistema: `sudo apt install libegl1 libxcb-cursor0 alsa-utils espeak-ng`. Os dois primeiros são da janela. O `alsa-utils` traz o `arecord`, que grava o microfone. O `espeak-ng` lê as mensagens em voz alta.
+
+| Recurso | No Linux |
+|---|---|
+| Conversa, CAD, verificação e vistas da peça | Funcionam, com os mesmos testes do Windows |
+| Mesa 3D interativa | Precisa de OpenGL 3.2. Os testes rodam com ela desligada, nos dois sistemas |
+| Áudio no chat | Grava pelo `arecord`. Sem ele, o app avisa. Testado com microfone de verdade só no Windows |
+| Ler em voz alta | Usa o `espeak-ng`. Sem ele, o app avisa |
+| Abrir um `.forja3d` com o app aberto e o aviso do MCP para a janela | Funcionam, por socket Unix |
+| Fatiar | O OrcaSlicer não vem junto. Baixe o AppImage da [versão 2.4.2](https://github.com/SoftFever/OrcaSlicer/releases/tag/v2.4.2), dê permissão de execução (`chmod +x`) e indique o arquivo em **Configurações > OrcaSlicer**. Os testes que fatiam de verdade só rodam no Windows |
+| Exportar para o cartão SD | O app não sugere o cartão: escolha a pasta dele na janela de salvar |
+| Limite de 4 GB de memória do CAD | Só no Windows. No Linux, um script da IA que gaste memória demais não é interrompido |
+| Instalador e `scripts/baixar_orca.py` | Só no Windows |
+
+A configuração fica em `~/Forja3D/config.toml`. Pelo pacote, as peças ficam na pasta Documentos, em `Forja3D`. Se o app não abrir, a mensagem aparece no terminal e os detalhes ficam em `~/Forja3D/logs/falha_ao_abrir.txt`.
 
 ## Como usar
 
@@ -167,6 +194,8 @@ Ele não leva o G-code, a verificação, a chave da API nem as conversas descart
 
 Também dá para começar por uma imagem: clique em **Imagem de referência**, ou arraste e cole a imagem no chat. O app mostra pelo menos 2 opções de conceito, cada uma com a peça montada e a vista explodida. Depois da escolha, o agente pergunta o que faltar e modela a peça. As imagens são só ilustração e não têm medidas reais.
 
+![Um presépio feito a partir de uma imagem: o conceito escolhido aparece na conversa, e as 5 peças com encaixes estão na mesa](docs/imagens/imagem_de_referencia.png)
+
 ## Usar com o Claude ou o Codex (MCP)
 
 O Forja3D também funciona como servidor MCP: o Claude, o Codex ou outro agente compatível modela com as mesmas ferramentas do agente do app. Quem pensa é o agente de fora, então o Forja3D não usa a sua chave de IA nesse caso.
@@ -266,6 +295,8 @@ O resultado fica em `dist\instalador\`. O script faz, em ordem:
 4. **Instalador:** roda o Inno Setup com `instalador/forja3d.iss`, instala em uma pasta temporária, confere de novo o que foi instalado e desinstala.
 
 Para gerar só o pacote, sem o Inno Setup, use `--sem-instalador`.
+
+**Pelo GitHub:** suba a versão em `pyproject.toml` e em `src/forja3d/versao.py`, escreva as novidades em `.github/notas_da_versao.md` e envie uma tag, como `git tag v0.2.0` seguido de `git push origin v0.2.0`. O workflow `.github/workflows/release.yml` cria o release, roda este mesmo script no Windows e anexa o instalador. Ele também empacota o Linux com o mesmo spec, procura segredos, testa o executável e anexa o `.tar.gz`. Lá não existe `config/ia_padrao.toml`, então a chave não tem como entrar nos pacotes.
 
 - **Ícone e logo:** os desenhos ficam em `src/forja3d/interface/icones/`. O ícone do exe, do instalador e dos arquivos `.forja3d` sai de `forja3d.svg`, `forja3d_medio.svg` e `forja3d_pequeno.svg`, um para cada faixa de tamanho, e a tela de abertura usa `logo.svg`.
 - **O que entra:** o que não é código está em `instalador/lista_do_pacote.py`, uma lista branca. A pasta `config` inteira levaria a chave. O instalador usa `config/ia_padrao.pacote.toml`, sem endpoint, chave nem modelo.

@@ -23,7 +23,9 @@ sys.path.insert(0, SPECPATH)
 from lista_do_pacote import dados_do_app  # noqa: E402
 
 RAIZ = Path(SPECPATH).parent
-VERSAO = tomllib.loads((RAIZ / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+# O ícone .ico e os dados de versão são do executável do Windows. No Linux, o mesmo spec gera a pasta sem eles.
+NO_WINDOWS = sys.platform == "win32"
+VERSAO =tomllib.loads((RAIZ / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
 NUMEROS = (*(int(n) for n in VERSAO.split(".")), 0)
 # Só funcionam com DLLs que vêm com esses produtos comerciais. O CadQuery usa o ipopt.
 PLUGINS_SEM_USO = (
@@ -68,8 +70,8 @@ executavel = EXE(
     # Sem isso, um erro no CAD ou nas vistas abre uma janela de aviso, e o processo auxiliar fica esperando até o tempo limite.
     disable_windowed_traceback=True,
     upx=False,
-    icon=str(RAIZ / "build" / "forja3d.ico"),
-    version=VSVersionInfo(
+    icon=str(RAIZ / "build" / "forja3d.ico") if NO_WINDOWS else None,
+    version=None if not NO_WINDOWS else VSVersionInfo(
         ffi=FixedFileInfo(filevers=NUMEROS, prodvers=NUMEROS),
         kids=[
             StringFileInfo(

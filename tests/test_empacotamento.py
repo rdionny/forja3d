@@ -150,15 +150,18 @@ def test_sem_argumentos_abre_o_app_sem_arquivo(monkeypatch):
     assert abertos == [None]
 
 
-def test_falha_ao_abrir_avisa_e_deixa_os_detalhes(monkeypatch, tmp_path):
+def test_falha_ao_abrir_avisa_e_deixa_os_detalhes(monkeypatch, tmp_path, capsys):
     def quebrar(_arquivo=None):
         raise ImportError("DLL load failed while importing vtkCommonCore")
 
     monkeypatch.setenv("APPDATA", str(tmp_path))
     monkeypatch.setattr(aplicativo, "executar", quebrar)
     avisos = []
-    monkeypatch.setattr(entrada.ctypes.windll.user32, "MessageBoxW", lambda _j, texto, _t, _i: avisos.append(texto))
+    if os.name == "nt":
+        monkeypatch.setattr(entrada.ctypes.windll.user32, "MessageBoxW", lambda _j, texto, _t, _i: avisos.append(texto))
     assert entrada.main([]) == 1
+    if os.name != "nt":
+        avisos.append(capsys.readouterr().err)
     assert "não conseguiu abrir" in avisos[0]
     assert "vtkCommonCore" in (tmp_path / "Forja3D" / "logs" / "falha_ao_abrir.txt").read_text(encoding="utf-8")
 
@@ -261,7 +264,9 @@ def test_segunda_abertura_espera_a_janela_que_ainda_carrega(qtbot, primeira, tmp
     processo = segunda_abertura(arquivo)
     # Sem atender eventos, como durante a importação do VTK: a entrega tem de esperar, não se perder.
     time.sleep(ESPERA_DA_JANELA_OCUPADA_S)
-    assert processo.poll() is None
+    if os.name == "nt":
+        # O pipe do Windows não guarda nada. O socket do Linux guarda, e a segunda abertura já pode ter saído.
+        assert processo.poll() is None
     qtbot.waitUntil(lambda: bool(primeira.pedidos), timeout=20000)
     assert processo.wait(20) == 0
     assert primeira.pedidos == [arquivo]
@@ -412,6 +417,7 @@ def test_lista_branca_acusa_o_que_falta_e_o_que_sobra(tmp_path):
     assert any("fora da lista branca" in p and "ia_padrao.toml" in p for p in problemas)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Confere as DLLs do pacote do Windows")
 def test_runtime_do_visual_cpp_nao_conta_como_windows():
     assert not conferir_pacote.vem_com_o_windows("msvcp140.dll")
     assert not conferir_pacote.vem_com_o_windows("vcruntime140_1.dll")

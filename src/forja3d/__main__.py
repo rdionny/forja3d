@@ -29,9 +29,13 @@ def _abrir_o_app(arquivo: Path | None = None) -> int:
         destino = pasta_usuario() / "logs" / "falha_ao_abrir.txt"
         destino.parent.mkdir(parents=True, exist_ok=True)
         destino.write_text(traceback.format_exc(), encoding="utf-8")
+        mensagem = f"O Forja3D não conseguiu abrir.\n\nOs detalhes estão em:\n{destino}"
         if os.name == "nt":
             icone_de_erro = 0x10
-            ctypes.windll.user32.MessageBoxW(None, f"O Forja3D não conseguiu abrir.\n\nOs detalhes estão em:\n{destino}", "Forja3D", icone_de_erro)
+            ctypes.windll.user32.MessageBoxW(None, mensagem, "Forja3D", icone_de_erro)
+        else:
+            # No Linux, quem abre pelo terminal vê aqui.
+            print(mensagem, file=sys.stderr)
         return 1
 
 

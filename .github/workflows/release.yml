@@ -1,0 +1,98 @@
+name: Release
+
+# Envie uma tag como v0.2.0 para gerar o release com o instalador do Windows e o pacote do Linux.
+# Aqui não existe config/ia_padrao.toml: a chave da API não tem como entrar nos pacotes.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  QT_QPA_PLATFORM: offscreen
+  PYTHONUTF8: "1"
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  criar:
+    name: Criar o release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: gh release view "$GITHUB_REF_NAME" || gh release create "$GITHUB_REF_NAME" --verify-tag --title "Forja3D ${GITHUB_REF_NAME#v}" --notes-file .github/notas_da_versao.md
+
+  windows:
+    name: Instalador do Windows
+    needs: criar
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - name: Dependências
+        run: python -m pip install -r requirements.lock
+      - name: Inno Setup
+        run: choco install innosetup --no-progress -y
+      # Baixa o OrcaSlicer oficial e confere o SHA-256, empacota, procura segredos, gera o instalador e confere o que ele instala.
+      - name: Gerar o instalador
+        run: python scripts/gerar_instalador.py
+      - name: Anexar ao release
+        shell: bash
+        run: gh release upload "$GITHUB_REF_NAME" dist/instalador/*.exe --clobber
+
+  linux:
+    name: Pacote do Linux
+    needs: criar
+    # O mais antigo disponível: o pacote leva bibliotecas que exigem esta glibc ou uma mais nova.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - uses: pyvista/setup-headless-display-action@v5
+        with:
+          qt: true
+      - name: Bibliotecas do Qt
+        run: sudo apt-get install -y --no-install-recommends libegl1 libxcb-cursor0
+      - name: Dependências
+        run: python -m pip install -r requirements.lock
+      - name: Empacotar
+        run: python -m PyInstaller --noconfirm --distpath dist --workpath build/pyinstaller instalador/forja3d.spec
+      - name: Procurar segredos e arquivos proibidos
+        run: |
+          python - <<'EOF'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "scripts")
+          import conferir_pacote as c
+          pasta = Path("dist/Forja3D")
+          problemas = c.procurar_segredos(pasta, c.segredos_deste_computador()) + c.procurar_arquivos_proibidos(pasta)
+          print("\n".join(problemas) or "Pacote limpo.")
+          sys.exit(1 if problemas else 0)
+          EOF
+      # O executável empacotado reabre a si mesmo para o CAD: confere que o kernel e a verificação foram junto.
+      - name: Testar o executável
+        run: |
+          printf '%s' '{"nome": "cubo", "finalidade": "teste", "material": "PLA", "carga": "leve", "dimensoes": {"x_mm": 20, "y_mm": 20, "z_mm": 20}, "pecas": 1, "furos": [], "orientacao_impressao": "base na mesa"}' > /tmp/espec.json
+          set +e
+          dist/Forja3D/Forja3D verificar tests/dados/cubo_calibracao_20mm.py /tmp/espec.json | tee /tmp/verificacao.json
+          codigo=${PIPESTATUS[0]}
+          set -e
+          # 0 aprovado, 1 reprovado na verificação. Os dois provam que o CAD rodou. 2 ou outro código é falha do pacote.
+          test "$codigo" -le 1
+          grep -q '"volume_mm3"\|"aprovado"' /tmp/verificacao.json
+      - name: Compactar e anexar ao release
+        run: |
+          versao="${GITHUB_REF_NAME#v}"
+          cp README.md instalador/TERCEIROS.txt dist/Forja3D/
+          tar -C dist -czf "Forja3D-$versao-linux-x64.tar.gz" Forja3D
+          gh release upload "$GITHUB_REF_NAME" "Forja3D-$versao-linux-x64.tar.gz" --clobber

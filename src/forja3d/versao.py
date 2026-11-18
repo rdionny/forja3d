@@ -7,7 +7,7 @@ from pathlib import Path
 
 from forja3d.configuracao import EMPACOTADO
 
-VERSAO = "0.1.0"  # Igual à de pyproject.toml. Um teste confere.
+VERSAO = "0.2.0"  # Igual à de pyproject.toml. Um teste confere.
 
 
 def data_da_atualizacao() -> datetime:
