@@ -1,11 +1,13 @@
 """Conversa com o agente."""
 from __future__ import annotations
 
+import logging
+import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QBuffer, QIODevice, QMimeData, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QGuiApplication, QKeySequence, QPixmap, QShortcut, QTextCursor
+from PySide6.QtCore import QBuffer, QIODevice, QMimeData, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QGuiApplication, QKeySequence, QPainter, QPixmap, QShortcut, QTextCursor
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -22,7 +24,17 @@ from PySide6.QtWidgets import (
 from forja3d.conceitos.referencia import EXTENSOES
 from forja3d.interface import tema
 from forja3d.interface.leitura import LeitorEmVoz, texto_para_fala
+from forja3d.interface.microfone import ErroDeAudio, Gravador, transcrever
 
+log = logging.getLogger(__name__)
+
+# Dez minutos dão uns 19 MB em 16 kHz: abaixo dos 25 MB que os servidores de Whisper costumam aceitar.
+LIMITE_DA_GRAVACAO_S = 600
+QUADRO_DO_ESPECTRO_MS = 50
+# A cada tantos segundos de fala, o que já foi gravado vai para a transcrição ao vivo.
+INTERVALO_AO_VIVO_S = 3.0
+QUEDA_DAS_BARRAS = 0.8
+DICA_DO_MICROFONE = "Gravar um áudio. O texto transcrito entra no campo, para você revisar antes de enviar."
 LARGURA_MINIATURA = 320
 ALTURA_DA_EDICAO = 96
 TEMPO_DO_AVISO_DE_COPIA_MS = 1500
@@ -193,6 +205,34 @@ class CartaoSugestao(QFrame):
         super().mousePressEvent(evento)
 
 
+class EspectroDeAudio(QWidget):
+    """Barras que sobem com cada faixa de frequência da voz, como no gravador de áudio do celular."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setFixedSize(150, 30)
+        self.alturas: list[float] = []
+
+    def mostrar(self, faixas: list[float]) -> None:
+        # Sobe na hora e desce devagar: sem isso, as barras piscariam a cada sílaba.
+        antigas = self.alturas or [0.0] * len(faixas)
+        self.alturas = [max(nova, antiga * QUEDA_DAS_BARRAS) for nova, antiga in zip(faixas, antigas, strict=False)]
+        self.update()
+
+    def paintEvent(self, _evento) -> None:  # noqa: N802 - nome definido pelo Qt.
+        if not self.alturas:
+            return
+        pintor = QPainter(self)
+        pintor.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pintor.setPen(Qt.PenStyle.NoPen)
+        pintor.setBrush(QColor(tema.ACENTO))
+        largura = self.width() / len(self.alturas)
+        for indice, altura in enumerate(self.alturas):
+            barra = max(2.0, altura * self.height())
+            pintor.drawRoundedRect(QRectF(indice * largura + 1, (self.height() - barra) / 2, largura - 2, barra), 1.5, 1.5)
+        pintor.end()
+
+
 class CampoTexto(QPlainTextEdit):
     enviar = Signal()
     imagem_recebida = Signal(object)
@@ -223,10 +263,22 @@ class PainelChat(QWidget):
     imagem_recebida = Signal(object)
     # Número do pedido e o texto novo, ou nada se é para enviar igual.
     refazer_pedido = Signal(int, object)
+    # O texto transcrito, a mensagem de erro e o número da gravação, vindos da thread da transcrição.
+    _transcrito = Signal(str, str, int)
+    _parcial = Signal(str, int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent, objectName="painel")
         self.setAcceptDrops(True)
+        self.endereco_transcricao = ""
+        self.gravador = Gravador()
+        self._transcrevendo = False
+        self._gravacao = 0
+        self._antes_do_audio = ""
+        self._parcial_em_andamento = False
+        self._segundos_do_parcial = 0.0
+        self._transcrito.connect(self._receber_transcricao)
+        self._parcial.connect(self._receber_parcial)
         self.referencia: str | None = None
         self.bolhas: list[Bolha] = []
         self.leitor = LeitorEmVoz(self)
@@ -290,6 +342,16 @@ class PainelChat(QWidget):
         linha_imagem.addStretch(1)
         layout.addLayout(linha_imagem)
 
+        self.linha_audio = QWidget()
+        linha_do_audio = QHBoxLayout(self.linha_audio)
+        linha_do_audio.setContentsMargins(0, 0, 0, 0)
+        self.espectro = EspectroDeAudio()
+        self.rotulo_audio = QLabel("", objectName="suave")
+        linha_do_audio.addWidget(self.espectro)
+        linha_do_audio.addWidget(self.rotulo_audio, 1)
+        self.linha_audio.hide()
+        layout.addWidget(self.linha_audio)
+
         entrada = QHBoxLayout()
         entrada.setSpacing(8)
         self.campo = CampoTexto(placeholderText="Descreva a peça ou peça um ajuste…")
@@ -299,12 +361,20 @@ class PainelChat(QWidget):
         self.botao_enviar = QPushButton("Enviar", objectName="primario")
         self.botao_enviar.setFixedHeight(66)
         self.botao_enviar.clicked.connect(self._enviar)
+        self.botao_microfone = QPushButton(toolTip=DICA_DO_MICROFONE, accessibleName="Gravar áudio")
+        self.botao_microfone.setIcon(tema.icone("microfone"))
+        self.botao_microfone.setIconSize(QSize(22, 22))
+        self.botao_microfone.setFixedSize(44, 66)
+        self.botao_microfone.clicked.connect(self._alternar_gravacao)
         entrada.addWidget(self.campo, 1)
+        entrada.addWidget(self.botao_microfone)
         entrada.addWidget(self.botao_enviar)
         layout.addLayout(entrada)
 
         self._relogio = QTimer(self, interval=1000)
         self._relogio.timeout.connect(self._atualizar_etapa)
+        self._relogio_audio = QTimer(self, interval=QUADRO_DO_ESPECTRO_MS)
+        self._relogio_audio.timeout.connect(self._atualizar_gravacao)
 
     def _criar_inicio(self) -> QWidget:
         caixa = QWidget()
@@ -324,9 +394,125 @@ class PainelChat(QWidget):
 
     def _enviar(self) -> None:
         texto = self.campo.toPlainText().strip()
-        if texto and not self._ocupado:
+        # Com o áudio em andamento, o campo ainda vai mudar.
+        if texto and not self._ocupado and not self.gravador.gravando and not self._transcrevendo:
             self.campo.clear()
             self.enviado.emit(texto)
+
+    # ---------- Áudio ----------
+
+    def _alternar_gravacao(self) -> None:
+        if self._transcrevendo:
+            return
+        if self.gravador.gravando:
+            self._parar_gravacao()
+            return
+        if not self.endereco_transcricao:
+            self.adicionar_evento("Para mandar áudio, informe o servidor de transcrição em Configurações.")
+            return
+        try:
+            self.gravador.iniciar()
+        except ErroDeAudio as falha:
+            self.adicionar_evento(str(falha))
+            return
+        self._gravacao += 1
+        self._antes_do_audio = self.campo.toPlainText()
+        self._parcial_em_andamento = False
+        self._segundos_do_parcial = 0.0
+        # O campo mostra a transcrição ao vivo: digitar ao mesmo tempo misturaria os dois.
+        self.campo.setReadOnly(True)
+        self.botao_microfone.setIcon(tema.icone("parar"))
+        self.botao_microfone.setToolTip("Parar e transcrever")
+        self.espectro.alturas = []
+        self._atualizar_gravacao()
+        self.linha_audio.show()
+        self._relogio_audio.start()
+
+    def _atualizar_gravacao(self) -> None:
+        segundos = self.gravador.segundos
+        if segundos >= LIMITE_DA_GRAVACAO_S:
+            self._parar_gravacao()
+            return
+        self.espectro.mostrar(self.gravador.faixas())
+        self.rotulo_audio.setText(f"Gravando… {int(segundos)} s. Clique no quadrado para terminar.")
+        if not self._parcial_em_andamento and segundos - self._segundos_do_parcial >= INTERVALO_AO_VIVO_S:
+            self._parcial_em_andamento = True
+            self._segundos_do_parcial = segundos
+            self._transcrever_em_fundo(self.gravador.wav(), parcial=True)
+
+    def _parar_gravacao(self) -> None:
+        self._relogio_audio.stop()
+        self.botao_microfone.setIcon(tema.icone("microfone"))
+        self.botao_microfone.setToolTip(DICA_DO_MICROFONE)
+        try:
+            audio = self.gravador.parar()
+        except ErroDeAudio as falha:
+            self._terminar_audio()
+            self.adicionar_evento(str(falha))
+            return
+        self._transcrevendo = True
+        self.botao_microfone.setEnabled(False)
+        self.espectro.alturas = []
+        self.espectro.update()
+        self.rotulo_audio.setText("Terminando a transcrição…")
+        self._transcrever_em_fundo(audio, parcial=False)
+
+    def _transcrever_em_fundo(self, audio: bytes, parcial: bool) -> None:
+        endpoint, gravacao = self.endereco_transcricao, self._gravacao
+
+        def executar() -> None:
+            texto, erro = "", ""
+            try:
+                texto = transcrever(audio, endpoint)
+            except ErroDeAudio as falha:
+                erro = str(falha)
+            except Exception:
+                log.exception("Falha ao transcrever o áudio")
+                erro = "Não consegui transcrever o áudio. Os detalhes foram para o log."
+            # O painel pode já ter sido fechado quando a resposta chega.
+            try:
+                if parcial:
+                    self._parcial.emit(texto, gravacao)
+                else:
+                    self._transcrito.emit(texto, erro, gravacao)
+            except RuntimeError:
+                log.debug("Transcrição ignorada: o painel já foi fechado")
+
+        threading.Thread(target=executar, daemon=True).start()
+
+    def _com_o_que_ja_estava(self, texto: str) -> str:
+        # Junta ao que já estava escrito: dá para digitar uma parte e falar outra.
+        antes = self._antes_do_audio
+        return antes + (" " if antes and not antes[-1].isspace() else "") + texto
+
+    def _receber_parcial(self, texto: str, gravacao: int) -> None:
+        self._parcial_em_andamento = False
+        # Depois do fim, quem escreve no campo é a transcrição do áudio inteiro.
+        if texto and gravacao == self._gravacao and self.gravador.gravando:
+            self.campo.setPlainText(self._com_o_que_ja_estava(texto))
+            self.campo.moveCursor(QTextCursor.MoveOperation.End)
+
+    def _receber_transcricao(self, texto: str, erro: str, gravacao: int) -> None:
+        if gravacao != self._gravacao:
+            return
+        self._terminar_audio()
+        if erro or not texto:
+            # O que a transcrição ao vivo já escreveu continua no campo.
+            self.adicionar_evento(erro or "Não entendi nada no áudio. Fale mais perto do microfone e tente de novo.")
+            return
+        self.campo.setPlainText(self._com_o_que_ja_estava(texto))
+        self.campo.moveCursor(QTextCursor.MoveOperation.End)
+        self.campo.setFocus()
+
+    def _terminar_audio(self) -> None:
+        self._transcrevendo = False
+        self.botao_microfone.setEnabled(True)
+        self.campo.setReadOnly(False)
+        self.linha_audio.hide()
+
+    def cancelar_gravacao(self) -> None:
+        self._relogio_audio.stop()
+        self.gravador.cancelar()
 
     def definir_referencia(self, parte: str) -> None:
         """A próxima mensagem vai falar desta parte."""

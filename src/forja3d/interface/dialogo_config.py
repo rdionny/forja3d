@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from collections.abc import Callable
 from typing import Any
@@ -177,6 +178,12 @@ class DialogoConfig(QDialog):
         formulario.addRow("OrcaSlicer", self._com_procurar(self.campo_orca, self._procurar_orca))
         self.campo_projetos = QLineEdit(str(self.config.pasta_projetos))
         formulario.addRow("Pasta das peças", self._com_procurar(self.campo_projetos, self._procurar_pasta))
+        self.campo_transcricao = QLineEdit(
+            self.config.transcricao,
+            placeholderText="https://servidor/v1",
+            toolTip="Servidor compatível com a OpenAI (/audio/transcriptions) que transforma o áudio do microfone em texto. Não precisa de chave.",
+        )
+        formulario.addRow("Transcrição de áudio", self.campo_transcricao)
         return formulario
 
     def _montar_mcp(self) -> QVBoxLayout:
@@ -378,7 +385,9 @@ class DialogoConfig(QDialog):
     # ---------- Caminhos ----------
 
     def _procurar_orca(self) -> None:
-        caminho, _ = QFileDialog.getOpenFileName(self, "Localizar o OrcaSlicer", self.campo_orca.text(), "orca-slicer.exe (*.exe)")
+        # No Linux, o OrcaSlicer costuma ser um AppImage, sem extensão fixa.
+        filtro = "orca-slicer.exe (*.exe)" if os.name == "nt" else "OrcaSlicer (*)"
+        caminho, _ = QFileDialog.getOpenFileName(self, "Localizar o OrcaSlicer", self.campo_orca.text(), filtro)
         if caminho:
             self.campo_orca.setText(caminho)
 
@@ -429,6 +438,7 @@ class DialogoConfig(QDialog):
             provedor=limpos[self.seletor_chat.combo_provedor.currentIndex()].nome,
             provedor_imagem=limpos[self.seletor_imagem.combo_provedor.currentIndex()].nome,
             mcp_ligado=self.caixa_mcp.isChecked(),
+            transcricao=self.campo_transcricao.text().strip().rstrip("/"),
         )
         self._aplicar_no_codex()
         self.accept()

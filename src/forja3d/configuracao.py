@@ -14,7 +14,7 @@ EMPACOTADO = getattr(sys, "frozen", False)
 # Instalado, RAIZ é a pasta do programa e os dados que vão com ele ficam em `_internal`.
 RAIZ = Path(sys.executable).parent if EMPACOTADO else Path(__file__).resolve().parents[2]
 PASTA_CONFIG = Path(getattr(sys, "_MEIPASS", RAIZ)) / "config"
-ORCA_PADRAO = RAIZ / "ferramentas" / "OrcaSlicer_2.4.2" / "orca-slicer.exe"
+ORCA_PADRAO = RAIZ / "ferramentas" / "OrcaSlicer_2.4.2" / ("orca-slicer.exe" if os.name == "nt" else "orca-slicer")
 MODELO_IMAGEM_PADRAO = "gemini-3.1-flash-image"
 PROVEDOR_PADRAO = "Padrão"
 
@@ -78,6 +78,8 @@ class Configuracao:
     provedores: tuple[Provedor, ...] = ()
     # Desligado, o servidor MCP recusa toda ferramenta, mesmo que o Codex ou o Claude ainda o abram.
     mcp_ligado: bool = True
+    # Endereço compatível com a OpenAI que transforma o áudio do microfone em texto. Vazio, o microfone só avisa.
+    transcricao: str = ""
 
     @property
     def ia_configurada(self) -> bool:
@@ -164,6 +166,7 @@ def carregar() -> Configuracao:
         pasta_projetos=Path(app["pasta_projetos"]) if app.get("pasta_projetos") else pasta_projetos_padrao(),
         provedores=tuple(provedores),
         mcp_ligado=dados.get("mcp", {}).get("ligado", True) is not False,
+        transcricao=str(dados.get("transcricao", {}).get("endpoint", "")).rstrip("/"),
     )
 
 
@@ -178,6 +181,7 @@ def salvar_preferencias(
     provedor: str = PROVEDOR_PADRAO,
     provedor_imagem: str = PROVEDOR_PADRAO,
     mcp_ligado: bool = True,
+    transcricao: str = "",
 ) -> Path:
     """Grava as preferências da tela de configurações. `json.dumps` gera strings válidas em TOML.
 
@@ -200,6 +204,9 @@ def salvar_preferencias(
         "",
         "[mcp]",
         f"ligado = {'true' if mcp_ligado else 'false'}",
+        "",
+        "[transcricao]",
+        f"endpoint = {json.dumps(transcricao)}",
         "",
     ]
     for item in provedores:

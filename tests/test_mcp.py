@@ -268,7 +268,6 @@ def test_servidor_de_verdade_pelo_stdio(tmp_path):
 # ---------- O aviso para a janela aberta ----------
 
 
-@pytest.mark.skipif(os.name != "nt", reason="O canal é um pipe do Windows")
 def test_aviso_chega_na_janela_aberta(qtbot, tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path / "dados"))
     instancia = InstanciaUnica()

@@ -60,7 +60,7 @@ Instale o OrcaSlicer 2.4.2 para Linux e indique o executável dele em **Configur
 
 ## Como usar
 
-1. Descreva a peça na conversa, com as medidas que tiver.
+1. Descreva a peça na conversa, com as medidas que tiver. Para falar em vez de digitar, clique no **microfone** ao lado de **Enviar**, fale e clique no quadrado: o texto transcrito aparece no campo, para você revisar antes de enviar. O endereço do servidor de transcrição, compatível com a OpenAI e sem chave, fica em **Configurações > Transcrição de áudio**.
 2. Acompanhe a peça no visualizador e a verificação abaixo da conversa. Peça ajustes pelo chat.
 3. Escolha material, qualidade, paredes e preenchimento, e clique em **Aprovar e preparar**.
 4. Clique em **Exportar G-code** e salve no **cartão SD**. A impressora não lê pen drive.

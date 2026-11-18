@@ -295,6 +295,7 @@ def test_texto_para_fala_tira_as_marcas():
     assert "Base de 40 mm" in fala and "espelho io traseiro" in fala and "manual" in fala
 
 
+@pytest.mark.skipif(os.name != "nt", reason="O PowerShell é do Windows. No Linux, a voz é o espeak-ng")
 def test_comando_de_voz_nao_leva_o_texto_e_usa_caminho_completo():
     programa, argumentos = comando_de_voz()
     assert os.path.isabs(programa)

@@ -371,6 +371,7 @@ def test_acha_a_chave_dentro_de_zip(tmp_path):
     assert len(problemas) == 1 and "modulo.py" in problemas[0]
 
 
+@pytest.mark.skipif(os.name != "nt", reason="A conferência é do pacote do instalador do Windows, que é um .exe")
 def test_acha_a_chave_dentro_do_executavel_do_pyinstaller(tmp_path):
     """Um pacote de verdade: o código vai compactado dentro do .exe."""
     script = tmp_path / "isca.py"

@@ -9,10 +9,11 @@ import ctypes
 import hashlib
 import logging
 import os
+import socket
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QLockFile, QObject, Signal
+from PySide6.QtCore import QDir, QLockFile, QObject, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 from forja3d.configuracao import pasta_usuario
@@ -34,12 +35,17 @@ def nome_do_canal() -> str:
 
 def avisar_que_mudou(pasta: Path) -> bool:
     """Avisa a janela aberta, se houver uma, que a peça mudou por fora. Bloqueia até a janela ler: chame em outra thread."""
-    if os.name != "nt":
-        return False
+    dados = (PREFIXO_DE_MUDANCA + str(pasta)).encode("utf-8")
     try:
-        # O QLocalServer do Windows é um pipe com nome: dá para falar com ele sem o Qt.
-        with open(rf"\\.\pipe\{nome_do_canal()}", "wb", buffering=0) as canal:
-            canal.write((PREFIXO_DE_MUDANCA + str(pasta)).encode("utf-8"))
+        if os.name == "nt":
+            # O QLocalServer do Windows é um pipe com nome: dá para falar com ele sem o Qt.
+            with open(rf"\\.\pipe\{nome_do_canal()}", "wb", buffering=0) as canal:
+                canal.write(dados)
+        else:
+            # No Linux, é um socket Unix na pasta temporária do Qt.
+            with socket.socket(socket.AF_UNIX) as canal:
+                canal.connect(str(Path(QDir.tempPath()) / nome_do_canal()))
+                canal.sendall(dados)
         return True
     except OSError:
         return False

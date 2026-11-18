@@ -1,4 +1,4 @@
-"""Lê mensagens em voz alta com as vozes do próprio Windows: o texto não sai do computador."""
+"""Lê mensagens em voz alta com as vozes do próprio Windows, ou com o espeak-ng no Linux: o texto não sai do computador."""
 from __future__ import annotations
 
 import base64
@@ -21,7 +21,15 @@ $voz.Speak([System.Text.Encoding]::UTF8.GetString($memoria.ToArray()))
 """
 
 
+NO_WINDOWS = os.name == "nt"
+VOZ = "a voz do Windows" if NO_WINDOWS else "o espeak-ng"
+SEM_VOZ = "o PowerShell do Windows não abriu." if NO_WINDOWS else "instale o espeak-ng, que faz a voz no Linux."
+
+
 def comando_de_voz(script: str = SCRIPT) -> tuple[str, list[str]]:
+    if not NO_WINDOWS:
+        # Também pela entrada padrão, em UTF-8.
+        return "espeak-ng", ["-v", "pt-br", "-b", "1", "--stdin"]
     # Caminho completo: o Windows também procura executáveis na pasta atual.
     pasta = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0"
     codificado = base64.b64encode(script.encode("utf-16-le")).decode()
@@ -79,10 +87,10 @@ class LeitorEmVoz(QObject):
         if codigo == 0:
             self.terminou.emit()
         else:
-            self.falhou.emit("Não consegui ler em voz alta: a voz do Windows devolveu um erro.")
+            self.falhou.emit(f"Não consegui ler em voz alta: {VOZ} devolveu um erro.")
 
     def _ao_errar(self, erro: QProcess.ProcessError) -> None:
         # Quando o processo já rodou, quem avisa é o _ao_terminar.
         if erro == QProcess.ProcessError.FailedToStart:
             self.parar()
-            self.falhou.emit("Não consegui ler em voz alta: o PowerShell do Windows não abriu.")
+            self.falhou.emit(f"Não consegui ler em voz alta: {SEM_VOZ}")

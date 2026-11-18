@@ -19,6 +19,8 @@ SEM_JANELA = 0x08000000 if os.name == "nt" else 0
 VARIAVEIS_PERMITIDAS = (
     "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "PATH", "PATHEXT", "COMSPEC", "USERPROFILE", "LOCALAPPDATA",
     "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "OS", "SYSTEMDRIVE", "PROGRAMFILES", "PROGRAMDATA",
+    # No Linux: a pasta do usuário, a tela para o VTK desenhar as vistas e o idioma.
+    "HOME", "TMPDIR", "LANG", "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
 )
 
 

@@ -75,7 +75,9 @@ def pasta_dados() -> Path:
 
 
 def localizar_orca(configurado: Path | None = None) -> Path | None:
-    candidatos = [configurado, ORCA_PADRAO, Path(os.environ.get("PROGRAMFILES", "")) / "OrcaSlicer" / "orca-slicer.exe"]
+    candidatos = [configurado, ORCA_PADRAO]
+    if os.name == "nt":
+        candidatos.append(Path(os.environ.get("PROGRAMFILES", "")) / "OrcaSlicer" / "orca-slicer.exe")
     for candidato in candidatos:
         if candidato and candidato.is_file():
             return candidato
@@ -84,7 +86,9 @@ def localizar_orca(configurado: Path | None = None) -> Path | None:
 
 
 def _codigo_com_sinal(codigo: int) -> int:
-    # O Windows devolve o código como 32 bits sem sinal: 4294967246 é -50.
+    # O Windows devolve o código como 32 bits sem sinal: 4294967246 é -50. O Linux, como 8 bits: 206 é -50.
+    if os.name != "nt":
+        return codigo - 256 if codigo > 127 else codigo
     return codigo - 2**32 if codigo >= 2**31 else codigo
 
 
@@ -141,7 +145,7 @@ def _conferir_pedido(parametros: ParametrosFatiamento, perfil: dict[str, Any], c
     orca = localizar_orca(caminho_orca)
     if orca is None:
         raise ErroFatiamento(
-            "Não encontrei o OrcaSlicer. Indique o caminho de orca-slicer.exe em Configurações. "
+            "Não encontrei o OrcaSlicer. Indique o caminho do executável dele em Configurações. "
             "A modelagem continua funcionando sem ele."
         )
     if parametros.material not in perfil["materiais"]:

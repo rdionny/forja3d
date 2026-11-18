@@ -148,6 +148,7 @@ class JanelaPrincipal(QMainWindow):
         self.painel_versoes = PainelVersoes()
         self.painel_3d = Painel3D(self.perfil)
         self.painel_chat = PainelChat()
+        self.painel_chat.endereco_transcricao = self.config.transcricao
         self.painel_checks = PainelChecks()
 
         centro = QWidget()
@@ -1169,6 +1170,7 @@ class JanelaPrincipal(QMainWindow):
         if dialogo.exec():
             self.config = configuracao.carregar()
             proteger_chaves(*self.config.chaves)
+            self.painel_chat.endereco_transcricao = self.config.transcricao
             self.trabalhador.config = self.config
             if self.projeto is not None:
                 self.trabalhador.abrir(self.projeto)
@@ -1178,6 +1180,8 @@ class JanelaPrincipal(QMainWindow):
 
     def closeEvent(self, evento) -> None:
         self.painel_chat.parar_leitura()
+        # No Linux o arecord é outro processo: sem isto, continuaria gravando com o app fechado.
+        self.painel_chat.cancelar_gravacao()
         if self.orquestrador is not None:
             self.orquestrador.cancelar()
         self._linha.quit()
