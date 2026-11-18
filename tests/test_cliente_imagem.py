@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from apoio_conceitos import imagem_png
+from apoio_ia import responder
 from forja3d import configuracao
 from forja3d.configuracao import MODELO_IMAGEM_PADRAO, ConfigIA
 from forja3d.ia.cliente import ClienteIA, ErroIA, ModeloIndisponivel, data_uri_png
@@ -26,12 +27,7 @@ def servidor():
 
         def do_POST(self):
             estado["pedidos"].append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
-            dados = json.dumps(estado["corpo"]).encode()
-            self.send_response(estado["status"])
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(dados)))
-            self.end_headers()
-            self.wfile.write(dados)
+            responder(self, estado["status"], estado["corpo"], estado["pedidos"][-1])
 
     http = ThreadingHTTPServer(("127.0.0.1", 0), Manipulador)
     threading.Thread(target=http.serve_forever, daemon=True).start()

@@ -65,6 +65,8 @@ class RespostaIA:
 
 
 def traduzir_erro(erro: Exception) -> ErroIA:
+    if isinstance(erro, ErroIA):
+        return erro
     if isinstance(erro, openai.AuthenticationError):
         return ErroIA("A IA recusou a chave da API. Confira a chave em Configurações.")
     if isinstance(erro, openai.RateLimitError):
@@ -82,9 +84,39 @@ def traduzir_erro(erro: Exception) -> ErroIA:
     return ErroIA(f"Erro inesperado ao falar com a IA: {type(erro).__name__}.")
 
 
+def _acumular(alvo: dict[str, Any], chave: str, valor: Any) -> None:
+    """Campos extras de um pedaço: texto se junta, o resto vale o mais recente. Assim o histórico recebe o mesmo da resposta inteira."""
+    if valor is None:
+        return
+    if isinstance(valor, str) and isinstance(alvo.get(chave), str):
+        alvo[chave] += valor
+    else:
+        alvo[chave] = valor
+
+
+def o_que_esta_fazendo(conteudo: str, extras: dict[str, Any], chamadas: dict[int, dict[str, Any]]) -> str:
+    """Uma frase curta para a linha de andamento, a partir do que já chegou."""
+    if chamadas:
+        ultima = chamadas[max(chamadas)]["function"]
+        if ultima["name"] in ("executar_cad", "editar_cad"):
+            linhas = ultima["arguments"].count("\\n") + 1
+            return f"escrevendo o script, {linhas} linhas" if ultima["name"] == "executar_cad" else f"escrevendo a alteração, {linhas} linhas"
+        return f"preparando {ultima['name'].replace('_', ' ')}"
+    if conteudo:
+        return "escrevendo a resposta"
+    pensamento = sum(len(v) for k, v in extras.items() if isinstance(v, str) and "reason" in k)
+    if not pensamento:
+        return "esperando a IA"
+    # Uns 4 caracteres por token, com o ponto de milhar do português.
+    tokens = pensamento // 4
+    return f"pensando, {f'{tokens:,}'.replace(',', '.')} tokens" if tokens else "pensando"
+
+
 class ClienteIA:
     def __init__(self, config: ConfigIA) -> None:
         self._config = config
+        # Quem ouve o andamento da resposta, enquanto ela chega. O orquestrador liga na linha de andamento.
+        self.acompanhar: Callable[[str], None] | None = None
         self._cliente = OpenAI(
             base_url=config.endpoint,
             api_key=config.api_key or "sem-chave",
@@ -128,6 +160,8 @@ class ClienteIA:
             "model": self._config.modelo,
             "messages": mensagens,
             "temperature": self._config.temperatura if temperatura is None else temperatura,
+            # Aos pedaços: o limite de tempo vale para a IA parada, não para uma resposta longa, e a tela mostra o andamento.
+            "stream": True,
         }
         esforco = self._config.esforco.get(etapa)
         if esforco:
@@ -136,21 +170,63 @@ class ClienteIA:
             argumentos["tools"] = ferramentas
 
         inicio = time.monotonic()
-        resposta = self._criar(self._cliente, argumentos, cancelar)
-        mensagem = resposta.choices[0].message
-        chamadas = [
-            ChamadaFerramenta(c.id, c.function.name, c.function.arguments or "{}") for c in (mensagem.tool_calls or [])
-        ]
-        tokens = resposta.usage.model_dump(exclude_none=True) if resposta.usage else {}
+        mensagem, modelo, tokens = self._executar(lambda: self._receber(argumentos, cancelar), cancelar)
+        chamadas = [ChamadaFerramenta(c["id"], c["function"]["name"], c["function"]["arguments"] or "{}") for c in mensagem.get("tool_calls", [])]
         log.info(
-            "etapa=%s duracao=%.1fs chamadas=%s modelo=%s tokens=%s",
+            "etapa=%s duracao=%.1fs chamadas=%s modelo=%s tokens=%s caracteres=%d",
             etapa,
             time.monotonic() - inicio,
             [c.nome for c in chamadas],
-            resposta.model,
+            modelo,
             tokens,
+            len(mensagem.get("content") or "") + sum(len(c["function"]["arguments"]) for c in mensagem.get("tool_calls", [])),
         )
-        return RespostaIA(mensagem.content or "", chamadas, mensagem.model_dump(exclude_none=True), tokens)
+        return RespostaIA(mensagem.get("content") or "", chamadas, mensagem, tokens)
+
+    def _receber(self, argumentos: dict[str, Any], cancelar: threading.Event | None) -> tuple[dict[str, Any], str, dict[str, Any]]:
+        """Junta os pedaços na mesma mensagem que a resposta inteira daria. Roda na thread descartável de _executar."""
+        fluxo = self._cliente.chat.completions.create(**argumentos)
+        conteudo: list[str] = []
+        extras: dict[str, Any] = {}
+        chamadas: dict[int, dict[str, Any]] = {}
+        modelo, tokens, recebeu, avisado = "", {}, False, 0.0
+        try:
+            for pedaco in fluxo:
+                if cancelar is not None and cancelar.is_set():
+                    break
+                modelo = pedaco.model or modelo
+                if pedaco.usage:
+                    tokens = pedaco.usage.model_dump(exclude_none=True)
+                for escolha in pedaco.choices:
+                    recebeu = True
+                    delta = escolha.delta
+                    if delta.content:
+                        conteudo.append(delta.content)
+                    for chave, valor in (delta.model_extra or {}).items():
+                        _acumular(extras, chave, valor)
+                    for parcial in delta.tool_calls or []:
+                        chamada = chamadas.setdefault(parcial.index, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                        if parcial.id:
+                            chamada["id"] = parcial.id
+                        if parcial.function is not None:
+                            chamada["function"]["name"] = parcial.function.name or chamada["function"]["name"]
+                            chamada["function"]["arguments"] += parcial.function.arguments or ""
+                        for chave, valor in (parcial.model_extra or {}).items():
+                            _acumular(chamada, chave, valor)
+                agora = time.monotonic()
+                if self.acompanhar is not None and agora - avisado > 0.5:
+                    avisado = agora
+                    self.acompanhar(o_que_esta_fazendo("".join(conteudo), extras, chamadas))
+        finally:
+            fluxo.close()
+        if not recebeu:
+            raise ErroIA("A IA devolveu uma resposta vazia. Tente de novo.")
+        mensagem: dict[str, Any] = {"role": "assistant", **extras}
+        if conteudo:
+            mensagem["content"] = "".join(conteudo)
+        if chamadas:
+            mensagem["tool_calls"] = [chamadas[i] for i in sorted(chamadas)]
+        return mensagem, modelo, tokens
 
     def gerar_imagem(self, prompt: str, referencia: bytes, cancelar: threading.Event | None = None) -> ImagemGerada:
         """Gera uma imagem por chamada: o modelo recusa `n` maior que 1."""

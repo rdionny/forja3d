@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -13,19 +14,32 @@ from typing import Any
 from forja3d.layout_mesa import LayoutMesa
 
 ESTADO_INICIAL: dict[str, Any] = {"titulo": "Nova peça", "versao_atual": None, "versao_aprovada": None}
+TENTATIVAS_DE_TROCA = 5
 _VERSAO = re.compile(r"^v\d{3,}$")
+
+
+def _trocar(temporario: Path, caminho: Path) -> None:
+    # No Windows, a troca é recusada enquanto outra thread lê o arquivo, ou o antivírus o examina: espera um instante e tenta de novo.
+    for tentativa in range(TENTATIVAS_DE_TROCA):
+        try:
+            temporario.replace(caminho)
+            return
+        except PermissionError:
+            if tentativa == TENTATIVAS_DE_TROCA - 1:
+                raise
+            time.sleep(0.05 * (tentativa + 1))
 
 
 def gravar_json(caminho: Path, dados: Any) -> None:
     temporario = caminho.with_name(caminho.name + ".tmp")
     temporario.write_text(json.dumps(dados, ensure_ascii=False, indent=1), encoding="utf-8")
-    temporario.replace(caminho)
+    _trocar(temporario, caminho)
 
 
 def gravar_bytes(caminho: Path, dados: bytes) -> None:
     temporario = caminho.with_name(caminho.name + ".tmp")
     temporario.write_bytes(dados)
-    temporario.replace(caminho)
+    _trocar(temporario, caminho)
 
 
 def ler_json(caminho: Path, padrao: Any = None) -> Any:

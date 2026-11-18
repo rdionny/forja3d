@@ -34,6 +34,10 @@ QUADRO_DO_ESPECTRO_MS = 50
 # A cada tantos segundos de fala, o que já foi gravado vai para a transcrição ao vivo.
 INTERVALO_AO_VIVO_S = 3.0
 QUEDA_DAS_BARRAS = 0.8
+# O giro mostra que o app está trabalhando mesmo quando a IA demora a mandar o próximo pedaço.
+GIRO = "◐◓◑◒"
+QUADRO_DO_GIRO_MS = 150
+ETAPAS_VISIVEIS = 4
 DICA_DO_MICROFONE = "Gravar um áudio. O texto transcrito entra no campo, para você revisar antes de enviar."
 LARGURA_MINIATURA = 320
 ALTURA_DA_EDICAO = 96
@@ -289,6 +293,10 @@ class PainelChat(QWidget):
         self._seguindo_o_fim = False
         self._inicio_etapa = 0.0
         self._texto_etapa = ""
+        self._etapa_base = ""
+        self._inicio_do_passo = 0.0
+        self._feitas: list[tuple[str, float]] = []
+        self._quadro = 0
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 10, 12, 12)
@@ -309,14 +317,24 @@ class PainelChat(QWidget):
         self.vazio = self._criar_inicio()
         self.lista.insertWidget(0, self.vazio)
 
+        # Andamento: as etapas já feitas, com o tempo de cada uma, e a atual girando, com o detalhe ao vivo da IA.
         self.linha_etapa = QFrame(objectName="linhaEtapa")
-        linha = QHBoxLayout(self.linha_etapa)
-        linha.setContentsMargins(10, 6, 6, 6)
-        self.rotulo_etapa = QLabel("", objectName="etapa")
+        coluna_etapa = QVBoxLayout(self.linha_etapa)
+        coluna_etapa.setContentsMargins(10, 6, 6, 6)
+        coluna_etapa.setSpacing(2)
+        self.rotulo_feitas = QLabel("", objectName="suave", wordWrap=True)
+        self.rotulo_feitas.hide()
+        coluna_etapa.addWidget(self.rotulo_feitas)
+        linha = QHBoxLayout()
+        linha.setContentsMargins(0, 0, 0, 0)
+        self.rotulo_giro = QLabel(GIRO[0], objectName="etapa")
+        self.rotulo_etapa = QLabel("", objectName="etapa", wordWrap=True)
         self.botao_cancelar = QPushButton("Cancelar", objectName="plano")
         self.botao_cancelar.clicked.connect(self.cancelar)
+        linha.addWidget(self.rotulo_giro)
         linha.addWidget(self.rotulo_etapa, 1)
         linha.addWidget(self.botao_cancelar)
+        coluna_etapa.addLayout(linha)
         self.linha_etapa.hide()
         layout.addWidget(self.linha_etapa)
 
@@ -371,7 +389,7 @@ class PainelChat(QWidget):
         entrada.addWidget(self.botao_enviar)
         layout.addLayout(entrada)
 
-        self._relogio = QTimer(self, interval=1000)
+        self._relogio = QTimer(self, interval=QUADRO_DO_GIRO_MS)
         self._relogio.timeout.connect(self._atualizar_etapa)
         self._relogio_audio = QTimer(self, interval=QUADRO_DO_ESPECTRO_MS)
         self._relogio_audio.timeout.connect(self._atualizar_gravacao)
@@ -657,16 +675,34 @@ class PainelChat(QWidget):
         self.linha_etapa.setVisible(ocupado)
         self.botao_cancelar.setEnabled(True)
         if ocupado:
-            self._inicio_etapa = time.monotonic()
-            self._texto_etapa = "Trabalhando"
+            self._inicio_etapa = self._inicio_do_passo = time.monotonic()
+            self._texto_etapa = self._etapa_base = "Trabalhando"
+            self._feitas = []
+            self.rotulo_feitas.hide()
             self._atualizar_etapa()
             self._relogio.start()
         else:
             self._relogio.stop()
 
     def definir_etapa(self, texto: str) -> None:
+        # "Modelando a peça: escrevendo o script, 40 linhas" é a mesma etapa de "Modelando a peça": só o detalhe muda.
+        base = texto.split(":", 1)[0].strip()
+        agora = time.monotonic()
+        if base != self._etapa_base:
+            if self._etapa_base and self._etapa_base != "Trabalhando":
+                self._feitas.append((self._etapa_base, agora - self._inicio_do_passo))
+                self._mostrar_feitas()
+            self._etapa_base, self._inicio_do_passo = base, agora
         self._texto_etapa = texto
         self._atualizar_etapa()
+
+    def _mostrar_feitas(self) -> None:
+        linhas = [f"✓ {nome} · {int(segundos)} s" for nome, segundos in self._feitas[-ETAPAS_VISIVEIS:]]
+        escondidas = len(self._feitas) - ETAPAS_VISIVEIS
+        if escondidas > 0:
+            linhas.insert(0, f"✓ mais {escondidas} {'etapa' if escondidas == 1 else 'etapas'}")
+        self.rotulo_feitas.setText("\n".join(linhas))
+        self.rotulo_feitas.show()
 
     def indicar_cancelando(self) -> None:
         self._texto_etapa = "Cancelando"
@@ -674,4 +710,9 @@ class PainelChat(QWidget):
         self._atualizar_etapa()
 
     def _atualizar_etapa(self) -> None:
-        self.rotulo_etapa.setText(f"{self._texto_etapa}… {int(time.monotonic() - self._inicio_etapa)} s")
+        agora = time.monotonic()
+        self._quadro = (self._quadro + 1) % len(GIRO)
+        self.rotulo_giro.setText(GIRO[self._quadro])
+        passo, total = int(agora - self._inicio_do_passo), int(agora - self._inicio_etapa)
+        tempo = f"{passo} s" if passo == total else f"{passo} s, total {total} s"
+        self.rotulo_etapa.setText(f"{self._texto_etapa}… {tempo}")

@@ -191,6 +191,12 @@ Cada mensagem tem uma barra com quatro ações:
 
 Editar e enviar de novo voltam a conversa até aquela mensagem: o que veio depois sai da conversa, e a peça volta para a versão daquele momento. As versões mais novas continuam na lista, e uma cópia da conversa antiga fica em `conversas_anteriores/`, na pasta do projeto. Antes de tirar outros pedidos da conversa, o app pergunta.
 
+### Andamento do pedido
+
+Enquanto o agente trabalha, a faixa acima do campo mostra o que ele está fazendo. O indicador gira ao lado da etapa atual, e o detalhe vem ao vivo da IA: "pensando", "escrevendo o script, 120 linhas" ou "escrevendo a resposta". Acima, ficam as etapas já feitas, com o tempo de cada uma. A resposta da IA chega aos pedaços: o limite de 240 s (`timeout_s`, no arquivo de configuração) só corta a IA que ficar esse tempo parada, sem mandar nada, e uma resposta longa nunca é repetida do zero.
+
+Para ajustar uma peça que já existe, o agente troca só os trechos do script que mudam, em vez de reescrever tudo. Isso pesa em scripts longos, como os de uma logo traçada ponto a ponto: mudar um nome deixa de exigir milhares de coordenadas de novo.
+
 ### Medidas pesquisadas na web
 
 Quando a peça precisa acomodar um objeto comercial, como uma bateria 18650, um conector P4 ou uma placa, e você não deu a medida, o agente pesquisa na internet antes de perguntar. A linha de andamento mostra "Pesquisando na web" e cada site lido. A medida, a folga somada para o encaixe e o endereço da fonte vão para as premissas da especificação e aparecem na resposta. Se as fontes divergirem, ou se o seu modelo puder variar, como uma bateria com proteção, que é mais comprida, ele pergunta.

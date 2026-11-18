@@ -56,7 +56,7 @@ Você está usando as ferramentas do Forja3D pelo MCP, de fora do app. As regras
 
 """
 # O que não lê só a peça: depois disso, a janela aberta relê a peça.
-MUDAM_A_PECA = {"criar_peca", "definir_especificacao", "executar_cad", "verificar_peca", "definir_cores", "fatiar_peca", "voltar_para_versao"}
+MUDAM_A_PECA = {"criar_peca", "definir_especificacao", "executar_cad", "editar_cad", "verificar_peca", "definir_cores", "fatiar_peca", "voltar_para_versao"}
 DESLIGADO = "O servidor MCP do Forja3D está desligado. Para usar, o usuário precisa ligar em Configurações, no app, na parte de agentes de fora."
 SO_LEITURA = {"ler_regras", "listar_pecas", "ver_peca", "renderizar_vistas"}
 PARAMETRO_PECA = {"type": "string", "description": "Identificador da peça, devolvido por criar_peca ou listar_pecas"}

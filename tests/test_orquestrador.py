@@ -67,7 +67,7 @@ def resultados_das_ferramentas(mensagens):
 def test_ferramentas_sao_exatamente_estas_e_nenhuma_exporta():
     nomes = {d["function"]["name"] for d in DEFINICOES}
     assert nomes == {
-        "definir_especificacao", "executar_cad", "verificar_peca", "renderizar_vistas", "definir_cores", "fatiar_peca",
+        "definir_especificacao", "executar_cad", "editar_cad", "verificar_peca", "renderizar_vistas", "definir_cores", "fatiar_peca",
         "pesquisar_na_web", "ler_pagina_web",
     }
 

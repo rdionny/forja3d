@@ -23,6 +23,7 @@ OBRIGATORIOS = {
         "premissas",
     },
     "executar_cad": {"codigo", "resumo_alteracao"},
+    "editar_cad": {"trocas", "resumo_alteracao"},
     "verificar_peca": set(),
     "renderizar_vistas": set(),
     "definir_cores": {"parte"},

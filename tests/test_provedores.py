@@ -15,6 +15,7 @@ from PySide6.QtCore import QSize
 from PySide6.QtWidgets import QLineEdit
 
 from apoio_conceitos import imagem_png
+from apoio_ia import responder
 from forja3d import configuracao
 from forja3d.configuracao import PROVEDOR_PADRAO, ConfigIA, Configuracao, Provedor
 from forja3d.ia.cliente import ClienteIA, ErroIA, ModeloIndisponivel, data_uri_png, eh_modelo_de_imagem, usa_rota_de_imagens
@@ -126,12 +127,8 @@ def servidores():
                 bruto = self.rfile.read(tamanho)
                 estado["pedidos"].append({"rota": self.path, "chave": self.headers["Authorization"], "corpo": bruto})
                 corpo = resposta_imagens if self.path.endswith("/images/edits") else resposta_chat
-                dados = json.dumps(corpo or {}).encode()
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(dados)))
-                self.end_headers()
-                self.wfile.write(dados)
+                pedido = json.loads(bruto) if self.headers.get("Content-Type", "").startswith("application/json") else {}
+                responder(self, status, corpo, pedido)
 
         http = ThreadingHTTPServer(("127.0.0.1", 0), Manipulador)
         threading.Thread(target=http.serve_forever, daemon=True).start()

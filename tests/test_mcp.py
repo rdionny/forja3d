@@ -93,7 +93,7 @@ class _Saida:
 def test_ferramentas_do_app_mais_as_de_achar_e_criar_pecas():
     assert set(FERRAMENTAS) == {
         "ler_regras", "listar_pecas", "criar_peca", "ver_peca", "voltar_para_versao",
-        "definir_especificacao", "executar_cad", "verificar_peca", "renderizar_vistas", "definir_cores", "fatiar_peca",
+        "definir_especificacao", "executar_cad", "editar_cad", "verificar_peca", "renderizar_vistas", "definir_cores", "fatiar_peca",
     }
 
 

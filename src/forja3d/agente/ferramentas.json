@@ -162,6 +162,46 @@
   {
     "type": "function",
     "function": {
+      "name": "editar_cad",
+      "description": "Troca trechos do script da versão atual e executa o resultado, salvando uma nova versão. Use em vez de executar_cad para mudanças pontuais, como trocar um texto, uma medida ou a posição de uma parte, e sempre em scripts longos, como os de contornos traçados ponto a ponto: só os trechos trocados saem da sua resposta, e o pedido termina muito mais rápido. Devolve medidas ou o erro, como executar_cad.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "trocas": {
+            "type": "array",
+            "description": "Aplicadas em ordem",
+            "items": {
+              "type": "object",
+              "properties": {
+                "de": {
+                  "type": "string",
+                  "description": "Trecho exato do script atual, com espaços e quebras de linha. Precisa aparecer uma única vez"
+                },
+                "para": {
+                  "type": "string",
+                  "description": "O que entra no lugar"
+                }
+              },
+              "required": [
+                "de",
+                "para"
+              ]
+            }
+          },
+          "resumo_alteracao": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "trocas",
+          "resumo_alteracao"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "verificar_peca",
       "description": "Compara a versão atual com a especificação e com as regras de impressão. Devolve bloqueios, alertas e medidas.",
       "parameters": {

@@ -61,6 +61,16 @@ class ArgsExecutarCad(BaseModel):
     resumo_alteracao: str = ""
 
 
+class Troca(BaseModel):
+    de: str = Field(min_length=1)
+    para: str
+
+
+class ArgsEditarCad(BaseModel):
+    trocas: list[Troca] = Field(min_length=1)
+    resumo_alteracao: str = ""
+
+
 class ArgsFatiar(BaseModel):
     material: str
     qualidade: str = "padrao"
@@ -168,6 +178,9 @@ class Orquestrador:
         self.cliente = cliente
         self.projeto = projeto
         self.ouvinte = ouvinte or Ouvinte()
+        # Enquanto a resposta da IA chega, a linha de andamento diz o que ela está fazendo. Sem cliente, só se confere a peça.
+        if cliente is not None:
+            cliente.acompanhar = lambda detalhe: self.ouvinte.etapa(f"{ROTULOS.get(self._proxima, 'Trabalhando')}: {detalhe}")
         self._cancelar = threading.Event()
         self._falhas: Counter[str] = Counter()
         self._forcar_texto: str | None = None
@@ -582,6 +595,7 @@ class Orquestrador:
         funcoes = {
             "definir_especificacao": self._definir_especificacao,
             "executar_cad": self._executar_cad,
+            "editar_cad": self._editar_cad,
             "verificar_peca": self._verificar,
             "renderizar_vistas": self._renderizar,
             "definir_cores": self._definir_cores,
@@ -656,6 +670,25 @@ class Orquestrador:
                 for p in partes
             ],
         }, []
+
+    def _editar_cad(self, argumentos: dict[str, Any]) -> tuple[dict[str, Any], list[Path]]:
+        """Troca só os trechos que mudam: num script com um contorno traçado, reescrever tudo custaria milhares de números."""
+        dados = ArgsEditarCad.model_validate(argumentos)
+        script = self.projeto.pasta_versao(self.versao_atual) / "modelo.py" if self.versao_atual else None
+        if script is None or not script.is_file():
+            return {"ok": False, "erro": "Ainda não há script para editar. Use executar_cad com o script completo."}, []
+        codigo = script.read_text(encoding="utf-8")
+        for numero, troca in enumerate(dados.trocas, start=1):
+            vezes = codigo.count(troca.de)
+            if vezes != 1:
+                self._proxima = "reparo"
+                return {
+                    "ok": False,
+                    "erro": f"Troca {numero}: o trecho `de` aparece {vezes} vezes no script da {self.versao_atual}. "
+                    "Copie o trecho exato, com espaços e quebras de linha, e com contexto suficiente para ser único.",
+                }, []
+            codigo = codigo.replace(troca.de, troca.para, 1)
+        return self._executar_cad({"codigo": codigo, "resumo_alteracao": dados.resumo_alteracao})
 
     def _verificar(self, _argumentos: dict[str, Any]) -> tuple[dict[str, Any], list[Path]]:
         if not self.versao_atual or (self.especificacao is None and not self.so_importadas()):

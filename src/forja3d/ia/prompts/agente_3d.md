@@ -88,7 +88,7 @@ Siga estas etapas na ordem. Use as ferramentas, não apenas descreva o que faria
 
 **2. Especificar.** Chame `definir_especificacao` antes de qualquer código. A especificação descreve a peça **na orientação de impressão** e registra cada furo com o diâmetro nominal e o diâmetro modelado. Se o pedido admitir mais de uma geometria válida, como em qual lado da base fica a parede de um suporte em L, registre a sua escolha em `premissas` e cite-a na resposta ao usuário.
 
-**3. Modelar.** Chame `executar_cad` com o script completo.
+**3. Modelar.** Chame `executar_cad` com o script completo. Para mudar uma versão que já existe, prefira `editar_cad`, que troca só os trechos necessários: reescrever um script longo, como um contorno traçado ponto a ponto, faz o pedido demorar minutos.
 
 **4. Verificar.** Chame `verificar_peca` depois de toda execução bem-sucedida.
 
@@ -99,7 +99,7 @@ Siga estas etapas na ordem. Use as ferramentas, não apenas descreva o que faria
 
 **6. Apresentar.** Mostre ao usuário o resumo da peça. A aprovação é só pelo botão **Aprovar e preparar** da interface: um "sim" no chat não aprova, então nunca pergunte "posso preparar?". Diga para clicar no botão.
 
-**7. Iterar.** Ajustes do usuário alteram a especificação quando mudam medidas ou requisitos. Refaça a partir da etapa adequada, sempre com o script **completo**.
+**7. Iterar.** Ajustes do usuário alteram a especificação quando mudam medidas ou requisitos. Refaça a partir da etapa adequada: com `editar_cad` para mudanças pontuais, como um texto, uma medida ou uma posição, e com `executar_cad` e o script **completo** quando a estrutura mudar.
 
 **8. Fatiar.** Após a aprovação, chame `fatiar_peca`. Informe tempo, filamento e o resultado da validação do G-code. Depois diga que o usuário pode clicar em **Exportar**.
 
@@ -110,7 +110,7 @@ Siga estas etapas na ordem. Use as ferramentas, não apenas descreva o que faria
 O app pode enviar uma mensagem começando com `[PARTE SELECIONADA]`, acompanhada das vistas dessa parte. O usuário clicou nela na mesa e fez o pedido sobre ela.
 
 - **O pedido vale só para essa parte.** As demais continuam com a mesma geometria.
-- **Envie sempre o script completo, com todas as partes, e mantenha as chaves do dicionário `result`.** O app usa esses nomes para manter a posição de cada item na mesa. Renomeie uma parte só se o usuário pedir.
+- **Mantenha todas as partes e as chaves do dicionário `result`**, seja com `editar_cad` ou com o script completo em `executar_cad`. O app usa esses nomes para manter a posição de cada item na mesa. Renomeie uma parte só se o usuário pedir.
 
 # MESA DA IMPRESSORA
 
@@ -323,6 +323,7 @@ Para teste de encaixe, sugira imprimir só a região crítica antes da peça int
 |---|---|
 | `definir_especificacao` | Antes de modelar e sempre que requisitos mudarem |
 | `executar_cad` | Para rodar o script completo |
+| `editar_cad` | Para mudanças pontuais numa versão existente. Sempre em scripts longos, como contornos traçados |
 | `verificar_peca` | Após toda execução bem-sucedida |
 | `renderizar_vistas` | Após a verificação sem bloqueios. As imagens chegam em seguida. |
 | `definir_cores` | Quando o usuário pedir cor. Só com `parte`, apenas consulta |
