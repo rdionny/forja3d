@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import gc
+import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -23,6 +25,20 @@ def lixo_coletado_na_thread_principal():
     o Qt destrói a janela fora da thread principal e o processo cai: no Linux, com falha de segmentação."""
     yield
     gc.collect()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    session.config.codigo_de_saida = int(exitstatus)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_unconfigure(config):
+    # shortcut: no Linux, o PySide 6.12 às vezes derruba o Python na coleta de lixo final, depois de todos os testes
+    # ("bool_dealloc"). Sair sem a finalização mantém o código de saída real. Tirar quando o PySide corrigir.
+    if sys.platform.startswith("linux") and hasattr(config, "codigo_de_saida"):
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(config.codigo_de_saida)
 
 
 @pytest.fixture
