@@ -9,22 +9,25 @@ import tomllib
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
-from PyInstaller.utils.win32.versioninfo import (
-    FixedFileInfo,
-    StringFileInfo,
-    StringStruct,
-    StringTable,
-    VarFileInfo,
-    VarStruct,
-    VSVersionInfo,
-)
+
+# O ícone .ico e os dados de versão são do executável do Windows. No Linux, o mesmo spec gera a pasta sem eles,
+# e o módulo de versão nem importa: lá o PyInstaller não tem win32api.
+NO_WINDOWS = sys.platform == "win32"
+if NO_WINDOWS:
+    from PyInstaller.utils.win32.versioninfo import (
+        FixedFileInfo,
+        StringFileInfo,
+        StringStruct,
+        StringTable,
+        VarFileInfo,
+        VarStruct,
+        VSVersionInfo,
+    )
 
 sys.path.insert(0, SPECPATH)
 from lista_do_pacote import dados_do_app  # noqa: E402
 
 RAIZ = Path(SPECPATH).parent
-# O ícone .ico e os dados de versão são do executável do Windows. No Linux, o mesmo spec gera a pasta sem eles.
-NO_WINDOWS = sys.platform == "win32"
 VERSAO =tomllib.loads((RAIZ / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
 NUMEROS = (*(int(n) for n in VERSAO.split(".")), 0)
 # Só funcionam com DLLs que vêm com esses produtos comerciais. O CadQuery usa o ipopt.

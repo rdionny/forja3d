@@ -5,6 +5,17 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # Para refazer um pacote de um release que já existe, sem tocar no outro.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag do release, como v0.2.0"
+        required: true
+      pacotes:
+        description: "Quais pacotes gerar"
+        type: choice
+        options: [todos, linux, windows]
+        default: todos
 
 permissions:
   contents: write
@@ -13,6 +24,7 @@ env:
   QT_QPA_PLATFORM: offscreen
   PYTHONUTF8: "1"
   GH_TOKEN: ${{ github.token }}
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   criar:
@@ -20,11 +32,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - run: gh release view "$GITHUB_REF_NAME" || gh release create "$GITHUB_REF_NAME" --verify-tag --title "Forja3D ${GITHUB_REF_NAME#v}" --notes-file .github/notas_da_versao.md
+      - run: gh release view "$TAG" || gh release create "$TAG" --verify-tag --title "Forja3D ${TAG#v}" --notes-file .github/notas_da_versao.md
 
   windows:
     name: Instalador do Windows
     needs: criar
+    if: inputs.pacotes != 'linux'
     runs-on: windows-latest
     timeout-minutes: 120
     steps:
@@ -43,11 +56,12 @@ jobs:
         run: python scripts/gerar_instalador.py
       - name: Anexar ao release
         shell: bash
-        run: gh release upload "$GITHUB_REF_NAME" dist/instalador/*.exe --clobber
+        run: gh release upload "$TAG" dist/instalador/*.exe --clobber
 
   linux:
     name: Pacote do Linux
     needs: criar
+    if: inputs.pacotes != 'windows'
     # O mais antigo disponível: o pacote leva bibliotecas que exigem esta glibc ou uma mais nova.
     runs-on: ubuntu-22.04
     timeout-minutes: 60
@@ -92,7 +106,7 @@ jobs:
           grep -q '"volume_mm3"\|"aprovado"' /tmp/verificacao.json
       - name: Compactar e anexar ao release
         run: |
-          versao="${GITHUB_REF_NAME#v}"
+          versao="${TAG#v}"
           cp README.md instalador/TERCEIROS.txt dist/Forja3D/
           tar -C dist -czf "Forja3D-$versao-linux-x64.tar.gz" Forja3D
-          gh release upload "$GITHUB_REF_NAME" "Forja3D-$versao-linux-x64.tar.gz" --clobber
+          gh release upload "$TAG" "Forja3D-$versao-linux-x64.tar.gz" --clobber
