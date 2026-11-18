@@ -52,7 +52,7 @@ def test_arquivo_real_passa_sem_falso_alarme(perfil):
         ("G1 Z260", "FORA_DO_VOLUME_Z"),
         ("M104 S300", "BICO_ACIMA_DO_LIMITE"),
         ("M109 S270", "BICO_ACIMA_DO_LIMITE"),
-        ("M104 S250", "BICO_FORA_DA_FAIXA"),
+        ("M104 S255", "BICO_FORA_DA_FAIXA"),
         ("M140 S120", "MESA_ACIMA_DO_LIMITE"),
         ("M190 S105", "MESA_ACIMA_DO_LIMITE"),
         ("M500", "COMANDO_PROIBIDO"),

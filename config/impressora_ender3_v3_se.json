@@ -59,10 +59,10 @@
   },
   "materiais": {
     "PLA": {
-      "bico_c": 220,
+      "bico_c": 240,
       "bico_min_c": 190,
-      "bico_max_c": 230,
-      "mesa_c": 55,
+      "bico_max_c": 250,
+      "mesa_c": 65,
       "ventoinha_min_pct": 100,
       "ventoinha_max_pct": 100,
       "camadas_sem_ventoinha": 1,

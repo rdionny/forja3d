@@ -58,6 +58,15 @@ class ParametrosFatiamento:
     preenchimento_pct: int = 15
     suporte: bool = False
     brim: bool = False
+    # Vazios, valem os do material, no perfil do filamento.
+    bico_c: int | None = None
+    mesa_c: int | None = None
+    ventoinha_pct: int | None = None
+    velocidade_pct: int = 100
+
+
+# A mesma temperatura em todos os tipos de mesa: qual deles o OrcaSlicer usa depende da máquina escolhida.
+TIPOS_DE_MESA = ("cool_plate_temp", "eng_plate_temp", "hot_plate_temp", "textured_plate_temp")
 
 
 @dataclass(frozen=True)
@@ -103,6 +112,12 @@ def _processo_derivado(parametros: ParametrosFatiamento, destino: Path, brim_mm:
             "brim_width": str(brim_mm),
         }
     )
+    if parametros.velocidade_pct != 100:
+        fator = parametros.velocidade_pct / 100
+        for chave, valor in list(base.items()):
+            # Velocidades em porcentagem, como "100%", já seguem a velocidade de que dependem.
+            if chave.endswith("_speed") and isinstance(valor, str) and valor.replace(".", "", 1).isdigit():
+                base[chave] = f"{float(valor) * fator:g}"
     if multicor is not None:
         quantidade = len(multicor.cores)
         base.update(
@@ -125,14 +140,26 @@ def _processo_derivado(parametros: ParametrosFatiamento, destino: Path, brim_mm:
     return destino
 
 
-def _configuracoes_de_cor(multicor: Multicor, material: str, trabalho: Path) -> tuple[Path, list[Path]]:
+def filamento_ajustado(parametros: ParametrosFatiamento) -> dict[str, Any]:
+    """O filamento do material, com o bico, a mesa e a ventoinha escolhidos na barra de impressão."""
+    filamento = json.loads((PASTA_CONFIG / "orca" / f"filamento_{parametros.material}.json").read_text(encoding="utf-8"))
+    if parametros.bico_c is not None:
+        filamento |= {"nozzle_temperature": [str(parametros.bico_c)], "nozzle_temperature_initial_layer": [str(parametros.bico_c)]}
+    if parametros.mesa_c is not None:
+        filamento |= {chave + sufixo: [str(parametros.mesa_c)] for chave in TIPOS_DE_MESA for sufixo in ("", "_initial_layer")}
+    if parametros.ventoinha_pct is not None:
+        filamento |= {"fan_min_speed": [str(parametros.ventoinha_pct)], "fan_max_speed": [str(parametros.ventoinha_pct)]}
+    return filamento
+
+
+def _configuracoes_de_cor(multicor: Multicor, parametros: ParametrosFatiamento, trabalho: Path) -> tuple[Path, list[Path]]:
     """A máquina e um filamento por cor. Todos do mesmo material: a temperatura não muda no meio da peça."""
     cores = [cor or COR_SEM_NOME for cor in multicor.cores]
     maquina = json.loads((PASTA_CONFIG / "orca" / "maquina.json").read_text(encoding="utf-8"))
     maquina.update({"extruder_colour": cores, **MAQUINA_SEM_TROCADOR})
     caminho_maquina = trabalho / "maquina.json"
     caminho_maquina.write_text(json.dumps(maquina), encoding="utf-8")
-    filamento = json.loads((PASTA_CONFIG / "orca" / f"filamento_{material}.json").read_text(encoding="utf-8"))
+    filamento = filamento_ajustado(parametros)
     filamentos = []
     for indice, cor in enumerate(cores, start=1):
         caminho = trabalho / f"filamento_{indice}.json"
@@ -170,10 +197,12 @@ def _rodar_orca(
     dados_orca.mkdir(parents=True, exist_ok=True)
     processo_json = _processo_derivado(parametros, trabalho / "processo.json", brim_mm, multicor)
     maquina = PASTA_CONFIG / "orca" / "maquina.json"
-    filamentos = str(PASTA_CONFIG / "orca" / f"filamento_{parametros.material}.json")
+    filamento = trabalho / "filamento.json"
+    filamento.write_text(json.dumps(filamento_ajustado(parametros)), encoding="utf-8")
+    filamentos = str(filamento)
     por_cor: list[str] = []
     if multicor is not None:
-        maquina, lista = _configuracoes_de_cor(multicor, parametros.material, trabalho)
+        maquina, lista = _configuracoes_de_cor(multicor, parametros, trabalho)
         filamentos = ";".join(str(f) for f in lista)
         por_cor = ["--load-filament-ids", ",".join(str(i) for i in range(1, len(multicor.cores) + 1))]
     comando = [

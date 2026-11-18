@@ -33,7 +33,7 @@ def _placa(pasta, lado_x, lado_y, altura):
 
 
 @pytest.mark.parametrize(
-    ("material", "bico", "mesa"), [("PLA", 220, 55), ("PETG", 250, 70), ("TPU", 230, 30)]
+    ("material", "bico", "mesa"), [("PLA", 240, 65), ("PETG", 250, 70), ("TPU", 230, 30)]
 )
 def test_materiais(tmp_path, perfil, cubo, material, bico, mesa):
     resumo = fatiar([cubo], ParametrosFatiamento(material=material), perfil, tmp_path, tamanho_peca_xy=(20, 20))
@@ -52,6 +52,18 @@ def test_parametros_chegam_ao_gcode(tmp_path, perfil, cubo):
     texto = (tmp_path / "peca.gcode").read_text(encoding="utf-8", errors="replace")
     for esperado in ("; wall_loops = 4", "; sparse_infill_density = 30%", "; brim_type = outer_only", "; enable_support = 1", "; layer_height = 0.12"):
         assert esperado in texto
+
+
+def test_ajustes_da_barra_chegam_ao_gcode(tmp_path, perfil, cubo):
+    p = ParametrosFatiamento(material="PLA", bico_c=245, mesa_c=68, ventoinha_pct=80, velocidade_pct=120)
+    resumo = fatiar([cubo], p, perfil, tmp_path, tamanho_peca_xy=(20, 20))
+    v = resumo["validacao"]
+    assert v["aprovado"], v["bloqueios"]
+    assert (v["bico_c"], v["mesa_c"]) == (245, 68)
+    texto = (tmp_path / "peca.gcode").read_text(encoding="utf-8", errors="replace")
+    for esperado in ("; fan_max_speed = 80", "; outer_wall_speed = 72", "; nozzle_temperature_initial_layer = 245"):
+        assert esperado in texto
+    assert resumo["parametros"]["bico_c"] == 245
 
 
 def test_peca_de_218_mm_e_recusada_com_mensagem_clara(tmp_path, perfil):

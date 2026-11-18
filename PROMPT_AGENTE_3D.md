@@ -58,8 +58,8 @@ O limite seguro existe porque o fim da impressão move o cabeçote 5 mm em X e Y
 
 | | PLA | PETG | TPU 95A |
 |---|---|---|---|
-| Bico | 220 °C (190–230) | 250 °C (220–260) | 230 °C (200–250) |
-| Mesa | 55 °C | 70 °C | 30 °C |
+| Bico | 240 °C (190–250) | 250 °C (220–260) | 230 °C (200–250) |
+| Mesa | 65 °C | 70 °C | 30 °C |
 | Ventoinha | 100%, a partir da camada 2 | 40–90%, a partir da camada 4 | 100%, a partir da camada 2 |
 | Velocidade máxima prática (camada 0,20) | cerca de 195 mm/s | cerca de 97 mm/s | cerca de 38 mm/s |
 | Fluxo | 0,98 | 0,95 | 1,00 |

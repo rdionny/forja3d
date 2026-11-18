@@ -3,28 +3,28 @@
  "name": "Creality Generic PLA @Ender-3V3-all",
  "from": "system",
  "cool_plate_temp": [
-  "55"
+  "65"
  ],
  "eng_plate_temp": [
-  "55"
+  "65"
  ],
  "hot_plate_temp": [
-  "55"
+  "65"
  ],
  "textured_plate_temp": [
-  "55"
+  "65"
  ],
  "cool_plate_temp_initial_layer": [
-  "55"
+  "65"
  ],
  "eng_plate_temp_initial_layer": [
-  "55"
+  "65"
  ],
  "hot_plate_temp_initial_layer": [
-  "55"
+  "65"
  ],
  "textured_plate_temp_initial_layer": [
-  "55"
+  "65"
  ],
  "overhang_fan_threshold": [
   "50%"
@@ -114,7 +114,7 @@
   "Cool Plate"
  ],
  "nozzle_temperature_initial_layer": [
-  "220"
+  "240"
  ],
  "full_fan_speed_layer": [
   "0"
@@ -135,7 +135,7 @@
   "; filament start gcode\n"
  ],
  "nozzle_temperature": [
-  "220"
+  "240"
  ],
  "temperature_vitrification": [
   "60"
@@ -144,7 +144,7 @@
   "190"
  ],
  "nozzle_temperature_range_high": [
-  "230"
+  "250"
  ],
  "additional_cooling_fan_speed": [
   "70"
