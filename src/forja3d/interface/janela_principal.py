@@ -279,6 +279,27 @@ class JanelaPrincipal(QMainWindow):
         opcoes.addStretch(1)
         coluna.addLayout(opcoes)
 
+        # Já vêm com os valores do material, e dá para mudar antes de preparar.
+        ajustes = QHBoxLayout()
+        ajustes.setSpacing(6)
+        self.spin_bico = QSpinBox(suffix=" °C", singleStep=5, toolTip="Temperatura do bico. A faixa é a do material escolhido")
+        self.spin_mesa = QSpinBox(minimum=0, maximum=self.perfil["mesa"]["temp_max_c"], suffix=" °C", singleStep=5, toolTip="Temperatura da mesa. Mais quente, a primeira camada segura melhor")
+        self.spin_ventoinha = QSpinBox(minimum=0, maximum=100, suffix=" %", singleStep=10, toolTip="Velocidade máxima da ventoinha que resfria a peça")
+        self.spin_velocidade = QSpinBox(minimum=50, maximum=150, value=100, suffix=" %", singleStep=10, toolTip="Velocidade de impressão, em relação à da qualidade escolhida")
+        for rotulo, campo in (("Bico", self.spin_bico), ("Mesa", self.spin_mesa), ("Ventoinha", self.spin_ventoinha), ("Velocidade", self.spin_velocidade)):
+            campo.setFixedWidth(84)
+            campo.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            campo.installEventFilter(self._filtro_roda)
+            ajustes.addWidget(QLabel(rotulo, objectName="suave"))
+            ajustes.addWidget(campo)
+            ajustes.addSpacing(8)
+        botao_padrao = QPushButton("Padrão do material", objectName="plano", toolTip="Volta bico, mesa, ventoinha e velocidade aos valores do material")
+        botao_padrao.clicked.connect(self._usar_padrao_do_material)
+        ajustes.addWidget(botao_padrao)
+        ajustes.addStretch(1)
+        coluna.addLayout(ajustes)
+        self._usar_padrao_do_material()
+
         self.rotulo_tempo = QLabel("", objectName="tempo", wordWrap=True, toolTip=AVISO_DA_ESTIMATIVA)
         self.rotulo_tempo.hide()
         coluna.addWidget(self.rotulo_tempo)
@@ -365,7 +386,9 @@ class JanelaPrincipal(QMainWindow):
 
         for campo in (self.combo_material, self.combo_qualidade):
             campo.currentIndexChanged.connect(self._ao_mudar_opcoes)
-        for campo in (self.spin_paredes, self.spin_preenchimento):
+        # O material novo traz as temperaturas dele.
+        self.combo_material.currentIndexChanged.connect(self._usar_padrao_do_material)
+        for campo in (self.spin_paredes, self.spin_preenchimento, self.spin_bico, self.spin_mesa, self.spin_ventoinha, self.spin_velocidade):
             campo.valueChanged.connect(self._ao_mudar_opcoes)
         for campo in (self.caixa_suporte, self.caixa_brim):
             campo.toggled.connect(self._ao_mudar_opcoes)
@@ -945,7 +968,19 @@ class JanelaPrincipal(QMainWindow):
             preenchimento_pct=self.spin_preenchimento.value(),
             suporte=self.caixa_suporte.isChecked(),
             brim=self.caixa_brim.isChecked(),
+            bico_c=self.spin_bico.value(),
+            mesa_c=self.spin_mesa.value(),
+            ventoinha_pct=self.spin_ventoinha.value(),
+            velocidade_pct=self.spin_velocidade.value(),
         )
+
+    def _usar_padrao_do_material(self) -> None:
+        dados = self.perfil["materiais"][self.combo_material.currentText()]
+        self.spin_bico.setRange(dados["bico_min_c"], dados["bico_max_c"])
+        self.spin_bico.setValue(dados["bico_c"])
+        self.spin_mesa.setValue(dados["mesa_c"])
+        self.spin_ventoinha.setValue(dados["ventoinha_max_pct"])
+        self.spin_velocidade.setValue(100)
 
     def _ao_mudar_opcoes(self) -> None:
         # O G-code pronto vale para as opções com que foi gerado: mudou, precisa preparar de novo.

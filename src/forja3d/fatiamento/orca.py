@@ -148,7 +148,9 @@ def filamento_ajustado(parametros: ParametrosFatiamento) -> dict[str, Any]:
     if parametros.mesa_c is not None:
         filamento |= {chave + sufixo: [str(parametros.mesa_c)] for chave in TIPOS_DE_MESA for sufixo in ("", "_initial_layer")}
     if parametros.ventoinha_pct is not None:
-        filamento |= {"fan_min_speed": [str(parametros.ventoinha_pct)], "fan_max_speed": [str(parametros.ventoinha_pct)]}
+        # A escolha é a velocidade máxima: o PETG varia de 40% a 90% conforme a camada, e isso continua.
+        minimo = min(int(filamento["fan_min_speed"][0]), parametros.ventoinha_pct)
+        filamento |= {"fan_min_speed": [str(minimo)], "fan_max_speed": [str(parametros.ventoinha_pct)]}
     return filamento
 
 
