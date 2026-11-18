@@ -27,6 +27,8 @@ OBRIGATORIOS = {
     "renderizar_vistas": set(),
     "definir_cores": {"parte"},
     "fatiar_peca": {"material", "qualidade", "paredes", "preenchimento_pct", "suporte", "brim"},
+    "pesquisar_na_web": {"consulta"},
+    "ler_pagina_web": {"url"},
 }
 
 

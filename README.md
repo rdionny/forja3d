@@ -191,6 +191,14 @@ Cada mensagem tem uma barra com quatro ações:
 
 Editar e enviar de novo voltam a conversa até aquela mensagem: o que veio depois sai da conversa, e a peça volta para a versão daquele momento. As versões mais novas continuam na lista, e uma cópia da conversa antiga fica em `conversas_anteriores/`, na pasta do projeto. Antes de tirar outros pedidos da conversa, o app pergunta.
 
+### Medidas pesquisadas na web
+
+Quando a peça precisa acomodar um objeto comercial, como uma bateria 18650, um conector P4 ou uma placa, e você não deu a medida, o agente pesquisa na internet antes de perguntar. A linha de andamento mostra "Pesquisando na web" e cada site lido. A medida, a folga somada para o encaixe e o endereço da fonte vão para as premissas da especificação e aparecem na resposta. Se as fontes divergirem, ou se o seu modelo puder variar, como uma bateria com proteção, que é mais comprida, ele pergunta.
+
+- **Onde pesquisa:** sem chave, na Wikipédia, que tem as medidas de padrões como pilhas, conectores e parafusos. Para produtos específicos, crie uma chave gratuita da [API do Brave Search](https://brave.com/search/api/) e informe em **Configurações > Pesquisa na web**. O app se identifica como Forja3D e só usa serviços que aceitam acesso automático.
+- **Segurança:** o agente só lê páginas públicas da internet, nunca endereços da rede de casa, nem quando um site redireciona para eles. Não lê PDF. O texto das páginas chega ao agente marcado como conteúdo de terceiros, e o prompt manda nunca seguir instruções escritas nele. Mesmo assim, confira as medidas citadas antes de imprimir.
+- **Só no app:** pelo MCP, o Claude e o Codex usam a pesquisa na web deles.
+
 ### Na lista de peças
 
 Clique com o botão direito em uma peça para **renomear**, **fixar no topo** ou **apagar**. Apagar manda a pasta do projeto para a Lixeira do Windows, de onde ela ainda pode voltar.

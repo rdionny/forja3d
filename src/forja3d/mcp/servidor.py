@@ -16,7 +16,14 @@ from pathlib import Path
 from typing import Any
 
 from forja3d import configuracao
-from forja3d.agente.orquestrador import DEFINICOES, PROMPT_SISTEMA, SCRIPT_SEM_PARTES, SEM_CALIBRACAO, Orquestrador
+from forja3d.agente.orquestrador import (
+    DEFINICOES,
+    PROMPT_SISTEMA,
+    SCRIPT_SEM_PARTES,
+    SEM_CALIBRACAO,
+    SO_DO_APP,
+    Orquestrador,
+)
 from forja3d.configuracao import Configuracao
 from forja3d.fatiamento.cores import cores_do_item, nome_da_cor
 from forja3d.ia.cliente import ErroIA
@@ -95,6 +102,8 @@ def definicoes() -> list[dict[str, Any]]:
     do_agente = []
     for item in DEFINICOES:
         funcao = item["function"]
+        if funcao["name"] in SO_DO_APP:
+            continue
         parametros = funcao["parameters"]
         do_agente.append(
             _ferramenta(

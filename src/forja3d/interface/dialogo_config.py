@@ -190,6 +190,13 @@ class DialogoConfig(QDialog):
             toolTip="Página de downloads em que o app instalado procura versões novas ao abrir. Vazio, não procura.",
         )
         formulario.addRow("Atualizações", self.campo_atualizacao)
+        self.campo_brave = QLineEdit(
+            self.config.chave_brave,
+            echoMode=QLineEdit.EchoMode.Password,
+            placeholderText="Opcional. Sem chave, o agente pesquisa na Wikipédia",
+            toolTip="Chave da API do Brave Search (brave.com/search/api), para o agente pesquisar medidas de produtos na web.",
+        )
+        formulario.addRow("Pesquisa na web", self.campo_brave)
         return formulario
 
     def _montar_mcp(self) -> QVBoxLayout:
@@ -446,6 +453,7 @@ class DialogoConfig(QDialog):
             mcp_ligado=self.caixa_mcp.isChecked(),
             transcricao=self.campo_transcricao.text().strip().rstrip("/"),
             atualizacao=self.campo_atualizacao.text().strip().rstrip("/"),
+            chave_brave=self.campo_brave.text().strip(),
         )
         self._aplicar_no_codex()
         self.accept()

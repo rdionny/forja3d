@@ -82,6 +82,8 @@ class Configuracao:
     transcricao: str = ""
     # A página de downloads em que o app instalado procura versões novas. Vazio, não procura.
     atualizacao: str = ""
+    # Opcional: sem ela, o agente pesquisa medidas na Wikipédia.
+    chave_brave: str = field(default="", repr=False)
 
     @property
     def ia_configurada(self) -> bool:
@@ -94,7 +96,7 @@ class Configuracao:
     @property
     def chaves(self) -> tuple[str, ...]:
         """Todas as chaves em uso, para o filtro de logs."""
-        todas = (self.ia.api_key, self.ia.api_key_imagem, *(p.api_key for p in self.provedores))
+        todas = (self.ia.api_key, self.ia.api_key_imagem, *(p.api_key for p in self.provedores), self.chave_brave)
         return tuple(dict.fromkeys(c for c in todas if c))
 
 
@@ -170,6 +172,7 @@ def carregar() -> Configuracao:
         mcp_ligado=dados.get("mcp", {}).get("ligado", True) is not False,
         transcricao=str(dados.get("transcricao", {}).get("endpoint", "")).rstrip("/"),
         atualizacao=str(dados.get("atualizacao", {}).get("endereco", "")).rstrip("/"),
+        chave_brave=str(dados.get("web", {}).get("chave_brave", "")).strip(),
     )
 
 
@@ -186,6 +189,7 @@ def salvar_preferencias(
     mcp_ligado: bool = True,
     transcricao: str = "",
     atualizacao: str = "",
+    chave_brave: str = "",
 ) -> Path:
     """Grava as preferências da tela de configurações. `json.dumps` gera strings válidas em TOML.
 
@@ -214,6 +218,9 @@ def salvar_preferencias(
         "",
         "[atualizacao]",
         f"endereco = {json.dumps(atualizacao)}",
+        "",
+        "[web]",
+        f"chave_brave = {json.dumps(chave_brave)}",
         "",
     ]
     for item in provedores:
