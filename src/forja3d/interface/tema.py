@@ -57,6 +57,8 @@ QFrame#itemCheck {{ background: {ELEVADO}; border-radius: 6px; }}
 QSlider::groove:horizontal {{ height: 6px; background: {BORDA}; border-radius: 3px; }}
 QSlider::sub-page:horizontal {{ background: {ACENTO}; border-radius: 3px; }}
 QSlider::handle:horizontal {{ background: {TEXTO}; width: 14px; height: 14px; margin: -4px 0; border-radius: 7px; }}
+QProgressBar {{ background: {ELEVADO}; border: 1px solid {BORDA}; border-radius: 4px; text-align: center; min-height: 18px; }}
+QProgressBar::chunk {{ background: {ACENTO}; border-radius: 3px; }}
 QScrollArea {{ border: none; background: transparent; }}
 QScrollArea > QWidget > QWidget {{ background: transparent; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}

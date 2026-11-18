@@ -40,18 +40,21 @@ from forja3d.fatiamento.cores import (
     estimar_trocas,
     nome_da_cor,
     roteiro_da_preparacao,
+    roteiro_das_trocas,
 )
 from forja3d.fatiamento.exportacao import (
     ExportacaoBloqueada,
     destinos_dos_arquivos,
     exportar_arquivos,
     exportar_gcode,
+    gcode_aprovado,
     nome_sugerido,
     unidades_removiveis,
 )
 from forja3d.fatiamento.orca import ParametrosFatiamento, localizar_orca
 from forja3d.fatiamento.simulacao import Percurso
 from forja3d.fatiamento.tempo import AVISO_DA_ESTIMATIVA, segundos_do_tempo, texto_da_previsao
+from forja3d.fatiamento.usb import ErroUsb, achar_impressora
 from forja3d.ia.cliente import ClienteIA, ErroIA
 from forja3d.importacao.leitura import FORMATOS_ACEITOS, FORMATOS_RECUSADOS
 from forja3d.importacao.preparo import ModeloLido
@@ -59,6 +62,7 @@ from forja3d.interface import tema
 from forja3d.interface.dialogo_conceitos import DialogoConceitos
 from forja3d.interface.dialogo_config import DialogoConfig
 from forja3d.interface.dialogo_importar import DialogoImportar
+from forja3d.interface.dialogo_usb import DialogoUsb, aviso_de_energia
 from forja3d.interface.painel_3d import Painel3D
 from forja3d.interface.painel_chat import PainelChat
 from forja3d.interface.painel_checks import PainelChecks
@@ -121,6 +125,7 @@ class JanelaPrincipal(QMainWindow):
         self.pasta_impressao: Path | None = None
         self._fabrica_cliente = fabrica_cliente
         self._arquivos_recebidos: list[Path] = []
+        self._dialogo_usb: DialogoUsb | None = None
         # Um agente de fora, pelo MCP, mudou a peça aberta: ela é relida quando a janela estiver livre.
         self._peca_mudou_por_fora = False
 
@@ -291,9 +296,12 @@ class JanelaPrincipal(QMainWindow):
         self.botao_exportar.clicked.connect(self._exportar)
         self.botao_simular = QPushButton("Simular", toolTip="Mostra a impressão camada por camada, a partir do G-code preparado")
         self.botao_simular.clicked.connect(self._simular)
+        self.botao_usb = QPushButton("Imprimir pela USB", toolTip="Manda o G-code validado direto para a impressora, pelo cabo USB")
+        self.botao_usb.clicked.connect(self._imprimir_pela_usb)
         acoes.addWidget(self.botao_aprovar)
         acoes.addWidget(self.rotulo_resumo, 1)
         acoes.addWidget(self.botao_simular)
+        acoes.addWidget(self.botao_usb)
         acoes.addWidget(self.botao_exportar)
         coluna.addLayout(acoes)
         return barra
@@ -397,6 +405,7 @@ class JanelaPrincipal(QMainWindow):
         self.botao_aprovar.setText("Preparar de novo" if liberado else "Aprovar e preparar")
         self.botao_exportar.setEnabled(liberado)
         self.botao_simular.setEnabled(liberado)
+        self.botao_usb.setEnabled(liberado and not self._usb_ativa())
         self.acao_salvar.setEnabled(not self.ocupado and self.projeto is not None)
         self.acao_salvar_como.setEnabled(not self.ocupado and self.projeto is not None)
         self.acao_abrir.setEnabled(not self.ocupado)
@@ -1067,12 +1076,15 @@ class JanelaPrincipal(QMainWindow):
         resumo = self._resumo_liberado()
         if resumo is None or self.ocupado:
             return
-        arquivo = next((a for a in resumo.get("arquivos") or [] if a["numero"] == self.painel_3d.arquivo_ativo), None)
-        nome = arquivo["gcode"] if arquivo else resumo["gcode"]
-        validacao = arquivo["validacao"] if arquivo else resumo["validacao"]
-        cor_inicial = ((arquivo or {}).get("cores") or {}).get("cor_inicial")
+        arquivo = self._arquivo_na_tela(resumo)
+        cor_inicial = (arquivo.get("cores") or {}).get("cor_inicial")
         self._iniciar_tarefa_de_arquivo("Lendo o G-code")
-        self._pedir_simulacao.emit(self.pasta_impressao / nome, cor_inicial, segundos_do_tempo(validacao.get("tempo")))
+        self._pedir_simulacao.emit(self.pasta_impressao / arquivo["gcode"], cor_inicial, segundos_do_tempo(arquivo["validacao"].get("tempo")))
+
+    def _arquivo_na_tela(self, resumo: dict[str, Any]) -> dict[str, Any]:
+        """O arquivo da mesa que está na tela. Um resumo antigo, de um arquivo só, não tem a lista."""
+        arquivo = next((a for a in resumo.get("arquivos") or [] if a["numero"] == self.painel_3d.arquivo_ativo), None)
+        return arquivo or {"numero": 1, "gcode": resumo["gcode"], "validacao": resumo["validacao"]}
 
     def _ao_ler_simulacao(self, percurso: Percurso) -> None:
         self.painel_3d.iniciar_simulacao(percurso)
@@ -1163,6 +1175,56 @@ class JanelaPrincipal(QMainWindow):
             return None
         return "\n".join(str(s) for s in salvos)
 
+    def _usb_ativa(self) -> bool:
+        return self._dialogo_usb is not None and self._dialogo_usb.ativa
+
+    def _imprimir_pela_usb(self) -> None:
+        """Imprime o arquivo da tela, com a mesma regra do Exportar: só um G-code aprovado sai do app."""
+        resumo = self._resumo_liberado()
+        if resumo is None or self._usb_ativa():
+            return
+        arquivo = self._arquivo_na_tela(resumo)
+        v = arquivo["validacao"]
+        try:
+            gcode = gcode_aprovado(self.pasta_impressao, arquivo["gcode"])
+            dispositivo = achar_impressora()
+        except (ExportacaoBloqueada, ErroUsb) as erro:
+            QMessageBox.warning(self, "Não foi possível imprimir pela USB", str(erro))
+            return
+        if dispositivo is None:
+            QMessageBox.warning(
+                self,
+                "Impressora não encontrada",
+                "Não achei a impressora na USB. Ligue a impressora, encaixe o cabo nos dois lados e tente de novo. "
+                "No Windows ela aparece como USB-SERIAL CH340. No Linux, como /dev/ttyUSB0.",
+            )
+            return
+        quantidade = len(resumo.get("arquivos") or [])
+        cores = arquivo.get("cores") or {}
+        roteiro = roteiro_das_trocas(cores)
+        if roteiro:
+            texto_cores = f"\n\n{roteiro}\nEm cada troca, a impressora espera você clicar em Retomar no app."
+        else:
+            texto_cores = f"\nCor: {nome_da_cor(cores['cor_inicial'])}" if cores.get("cor_inicial") else ""
+        confirmacao = QMessageBox.question(
+            self,
+            "Imprimir pela USB",
+            (f"Arquivo {arquivo['numero']} de {quantidade}, o que está na tela\n" if quantidade > 1 else "")
+            + f"Impressora: {dispositivo}\nMaterial: {resumo['parametros']['material']}\nBico: {v['bico_c']:.0f} °C, mesa: {v['mesa_c']:.0f} °C\n"
+            f"Tempo: {v.get('tempo', 'não informado')}\nFilamento: {tema.numero(v.get('filamento_g', 0), 1)} g{texto_cores}\n\n"
+            "• Ligar pela USB pode reiniciar a impressora. Se ela estiver imprimindo pelo cartão, essa impressão para.\n"
+            f"• {aviso_de_energia()}\n"
+            "• Confira o filamento carregado, limpe a mesa e acompanhe a primeira camada.\n\n"
+            "Começar a impressão?",
+        )
+        if confirmacao != QMessageBox.StandardButton.Yes:
+            return
+        tempo = v.get("tempo_s") or segundos_do_tempo(v.get("tempo"))
+        self._dialogo_usb = DialogoUsb(gcode, tempo, self.perfil["validacao_gcode"]["z_max"], dispositivo, self)
+        self._dialogo_usb.terminou.connect(self._atualizar_botoes)
+        self._dialogo_usb.iniciar()
+        self._atualizar_botoes()
+
     # ---------- Geral ----------
 
     def _abrir_configuracoes(self) -> None:
@@ -1179,6 +1241,16 @@ class JanelaPrincipal(QMainWindow):
             self._verificar_endpoint()
 
     def closeEvent(self, evento) -> None:
+        if self._usb_ativa():
+            resposta = QMessageBox.question(
+                self,
+                "Impressão pela USB em andamento",
+                "Fechar o Forja3D cancela a impressão pela USB: o bico e a mesa desligam, e a peça fica pela metade. Fechar mesmo assim?",
+            )
+            if resposta != QMessageBox.StandardButton.Yes:
+                evento.ignore()
+                return
+            self._dialogo_usb.encerrar()
         self.painel_chat.parar_leitura()
         # No Linux o arecord é outro processo: sem isto, continuaria gravando com o app fechado.
         self.painel_chat.cancelar_gravacao()

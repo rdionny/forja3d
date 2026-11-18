@@ -90,7 +90,7 @@ A configuração fica em `~/Forja3D/config.toml`. Pelo pacote, as peças ficam n
 1. Descreva a peça na conversa, com as medidas que tiver. Para falar em vez de digitar, clique no **microfone** ao lado de **Enviar**, fale e clique no quadrado: o texto transcrito aparece no campo, para você revisar antes de enviar. O endereço do servidor de transcrição, compatível com a OpenAI e sem chave, fica em **Configurações > Transcrição de áudio**.
 2. Acompanhe a peça no visualizador e a verificação abaixo da conversa. Peça ajustes pelo chat.
 3. Escolha material, qualidade, paredes e preenchimento, e clique em **Aprovar e preparar**.
-4. Clique em **Exportar G-code** e salve no **cartão SD**. A impressora não lê pen drive.
+4. Clique em **Exportar G-code** e salve no **cartão SD**. A impressora não lê pen drive. Com a impressora ligada no cabo USB, dá também para clicar em **Imprimir pela USB**: veja [Imprimir pela USB](#imprimir-pela-usb).
 
 ### Na mesa
 
@@ -162,6 +162,19 @@ Depois de **Aprovar e preparar**, clique em **Simular**. A mesa mostra o caminho
 - **Voltar à mesa:** fecha a simulação. Enquanto ela está aberta, não dá para mexer nas peças. Preparar de novo, mudar as opções ou mandar um pedido à IA também a encerram.
 
 Com vários arquivos, a simulação é a do arquivo que está na tela. O tempo é a estimativa do OrcaSlicer, sem contar as pausas. As linhas mostram o caminho do bico, não a largura real do plástico, e o filamento preto aparece em cinza, para não sumir no fundo escuro.
+
+### Imprimir pela USB
+
+Com a impressora ligada ao computador pelo cabo USB, clique em **Imprimir pela USB** em vez de **Exportar G-code**. Vale a mesma regra do cartão: só sai o G-code aprovado na validação. Com vários arquivos, vai o que está na tela.
+
+- **O computador não pode dormir, desligar nem fechar o Forja3D até o fim.** Pela USB, a impressora recebe uma linha por vez e depende do computador o tempo todo. O app pede ao sistema para não dormir sozinho (no Linux, pelo `systemd-inhibit`), mas fechar a tampa do notebook ou mandar dormir para a impressão no meio. Num notebook, deixe o carregador ligado. Se a ligação cair, o app avisa: a impressão não tem como continuar de onde parou, e o bico e a mesa podem ficar quentes até você desligar a impressora. Para impressões longas, o cartão SD continua mais seguro.
+- **A impressora é achada sozinha**, pelo chip USB dela: no Windows ela aparece como `USB-SERIAL CH340`, em geral na COM3, e no Linux como `/dev/ttyUSB0`. A conversa com a porta usa o `pyserial`, que está em `requirements.lock`.
+- **Ligar pode reiniciar a impressora.** Se ela estiver imprimindo pelo cartão, essa impressão para. Se a impressora disser que está imprimindo pelo cartão, o app não começa.
+- **Andamento:** a janela da impressão mostra a porcentagem, quanto falta e a que horas fica pronta, pela estimativa do OrcaSlicer, e as temperaturas enquanto aquece.
+- **Pausar e retomar:** a cabeça sobe 5 mm e vai para o canto. Ao retomar, volta para onde estava. O bico e a mesa continuam quentes na pausa.
+- **Trocas de cor:** em cada troca, o app para de mandar o G-code, mostra a cor seguinte e pisca na barra de tarefas. Troque o filamento como na impressão pelo cartão e clique em **Retomar**, no app. O `M25` que o app põe no G-code só pausa impressões do cartão: pela USB, quem segura a impressora parada é o app, e o M25 nem é enviado.
+- **Cancelar:** desliga o bico, a mesa e a ventoinha, sobe a cabeça até 10 mm e solta os motores X e Y. Fechar o app no meio da impressão pede confirmação e cancela do mesmo jeito.
+- **No Linux:** seu usuário precisa estar no grupo `dialout` (`sudo usermod -aG dialout $USER`, e depois sair e entrar de novo na sessão). No Ubuntu, se a impressora some logo depois de ligar o cabo, o `brltty` pode estar tomando a porta: `sudo apt remove brltty`.
 
 ### Na conversa
 

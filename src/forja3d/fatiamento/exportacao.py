@@ -37,15 +37,20 @@ def unidades_removiveis() -> list[Path]:
     return unidades
 
 
-def exportar_gcode(pasta_impressao: Path, destino: Path) -> Path:
-    """Recusa se o resumo não disser que a validação aprovou o arquivo."""
+def gcode_aprovado(pasta_impressao: Path, nome: str = "peca.gcode") -> Path:
+    """O G-code, só se o resumo disser que a validação aprovou. Exportar e imprimir pela USB passam por aqui."""
     resumo_arquivo = pasta_impressao / "resumo.json"
-    origem = pasta_impressao / "peca.gcode"
+    origem = pasta_impressao / nome
     if not resumo_arquivo.exists() or not origem.exists():
         raise ExportacaoBloqueada("Esta versão ainda não foi fatiada.")
     resumo = json.loads(resumo_arquivo.read_text(encoding="utf-8"))
     if not resumo.get("validacao", {}).get("aprovado"):
         raise ExportacaoBloqueada("O G-code foi reprovado na validação e não pode ser exportado.")
+    return origem
+
+
+def exportar_gcode(pasta_impressao: Path, destino: Path) -> Path:
+    origem = gcode_aprovado(pasta_impressao)
     temporario = destino.with_name(destino.name + ".tmp")
     shutil.copyfile(origem, temporario)
     temporario.replace(destino)

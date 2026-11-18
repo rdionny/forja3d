@@ -479,8 +479,8 @@ def bloco_de_troca(numero: int, total: int, camada: int, z_camada: float, z_atua
     return linhas
 
 
-def _estado_depois_da_linha(linha: str, estado: dict[str, Any]) -> None:
-    """Acompanha a altura e a velocidade: as linhas seguintes do fatiador contam com elas."""
+def estado_depois_da_linha(linha: str, estado: dict[str, Any]) -> None:
+    """Acompanha a posição e a velocidade: as linhas seguintes do fatiador contam com elas. A impressão pela USB também usa."""
     codigo = linha.split(";", 1)[0].strip()
     if codigo.startswith("G90"):
         estado["relativo"] = False
@@ -490,8 +490,9 @@ def _estado_depois_da_linha(linha: str, estado: dict[str, Any]) -> None:
         for letra, valor in _PALAVRA_G.findall(codigo):
             if letra == "F":
                 estado["f"] = float(valor)
-            elif letra == "Z":
-                estado["z"] = estado["z"] + float(valor) if estado["relativo"] else float(valor)
+            else:
+                chave = letra.lower()
+                estado[chave] = (estado.get(chave) or 0.0) + float(valor) if estado["relativo"] else float(valor)
 
 
 def _proximas_ferramentas(linhas: list[str]) -> tuple[int | None, list[int | None]]:
@@ -535,7 +536,7 @@ def inserir_pausas_nas_trocas(gcode: Path, cores: list[str | None], z_maximo: fl
         if linha.strip() == "M900 K0":
             continue
         saida.append(linha)
-        _estado_depois_da_linha(linha, estado)
+        estado_depois_da_linha(linha, estado)
     gcode.write_text("\n".join(saida) + "\n", encoding="utf-8")
     return {"cor_inicial": cor_inicial, "trocas": trocas, "gramas_por_cor": _gramas_por_cor(saida, cores)}
 
@@ -580,7 +581,7 @@ def inserir_pausas_por_altura(gcode: Path, alturas: list[dict[str, Any]], cor_in
             trocas.append({"numero": numero, "camada": troca["camada"], "z": round(troca["z"], 3), "de": atual, "para": troca["cor"]})
             atual = troca["cor"]
         saida.append(linha)
-        _estado_depois_da_linha(linha, estado)
+        estado_depois_da_linha(linha, estado)
     gcode.write_text("\n".join(saida) + "\n", encoding="utf-8")
     return {"cor_inicial": cor_inicial, "trocas": trocas, "gramas_por_cor": []}
 
