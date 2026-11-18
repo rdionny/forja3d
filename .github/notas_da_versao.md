@@ -1,13 +1,12 @@
 ## Novidades
 
-- **Atualização pelo próprio app:** a partir desta versão, o Forja3D avisa ao abrir quando houver uma versão nova na página de downloads e atualiza pelo próprio aviso, conferindo o arquivo antes de instalar.
-- **Temperaturas antes de preparar:** a barra de impressão ganhou bico, mesa, ventoinha e velocidade, já com os valores do material. O PLA passou a vir com bico em 240 °C e mesa em 65 °C, para a primeira camada segurar melhor.
-- **Imprimir pela USB:** com a impressora no cabo, o botão **Imprimir pela USB** manda o G-code aprovado direto para ela, com andamento, pausa, troca de cor e cancelamento. O computador precisa ficar ligado até o fim.
-- **Áudio no chat:** o microfone mostra o espectro da voz e transcreve enquanto você fala.
+- **Pedidos muito mais rápidos:** a resposta da IA chega aos pedaços. Uma resposta longa não é mais repetida do zero por causa do limite de tempo, que levava um ajuste simples a 12 minutos e terminava em "A IA demorou demais". Em peças com scripts longos, como uma logo traçada ponto a ponto, o agente troca só o trecho que muda, em vez de reescrever tudo.
+- **Você vê o que o agente está fazendo:** a faixa de andamento gira, lista as etapas já feitas com o tempo de cada uma e mostra o detalhe ao vivo: "pensando", "escrevendo o script, 120 linhas", "pesquisando na web".
+- **Medidas pesquisadas na web:** para acomodar uma bateria, um conector ou uma placa, o agente pesquisa a medida, confere na fonte e cita o endereço. Sem chave, pesquisa na Wikipédia. Com uma chave gratuita do Brave Search, em **Configurações > Pesquisa na web**, pesquisa na web toda.
 
 ## Downloads
 
 - **Windows 10 ou 11 (x64):** o instalador `.exe`, com o OrcaSlicer 2.4.2 junto. Não pede administrador. Ele não tem assinatura digital, então o SmartScreen pode avisar: clique em **Mais informações** e em **Executar assim mesmo**.
 - **Linux (x64, Ubuntu 22.04 ou mais novo):** o pacote `.tar.gz`. Extraia e rode `./Forja3D/Forja3D`. Antes, instale `libegl1 libxcb-cursor0 alsa-utils espeak-ng`. O OrcaSlicer não vem junto: baixe o AppImage da versão 2.4.2 e indique o arquivo em **Configurações**.
 
-Nenhum dos dois leva chave de API. No primeiro uso, o app abre em **Configurações** para você informar o seu provedor.
+Quem já tem a 0.2.1 recebe esta versão pelo aviso de atualização, ao abrir o app na rede de casa. Nenhum dos pacotes leva chave de API.
