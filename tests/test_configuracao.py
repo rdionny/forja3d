@@ -4,10 +4,15 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from forja3d import configuracao
 from forja3d.agente.orquestrador import PROMPT_SISTEMA
 from forja3d.configuracao import RAIZ
 from forja3d.registro import FiltroChave
+
+# A chave fica em config/ia_padrao.toml, que nunca vai para o git: no GitHub Actions, ele não existe.
+TEM_CHAVE = (RAIZ / "config" / "ia_padrao.toml").is_file()
 
 
 def test_padroes_do_projeto(monkeypatch, tmp_path):
@@ -17,7 +22,7 @@ def test_padroes_do_projeto(monkeypatch, tmp_path):
     config = configuracao.carregar()
     assert config.ia.endpoint == "http://129.151.36.250:8317/v1"
     assert config.ia.modelo == "gemini-3.8-flash-high"
-    assert config.ia.api_key
+    assert bool(config.ia.api_key) == TEM_CHAVE
     assert config.ia.esforco["modelagem"] == "high"
     assert config.ia.esforco["especificacao"] == "low"
 
@@ -52,6 +57,7 @@ def _versionaveis() -> list[Path]:
     return [RAIZ / linha for linha in saida.splitlines() if linha.strip()]
 
 
+@pytest.mark.skipif(not TEM_CHAVE, reason="config/ia_padrao.toml só existe na máquina de quem desenvolve")
 def test_chave_fora_dos_arquivos_versionaveis():
     chave = configuracao.carregar().ia.api_key
     assert chave

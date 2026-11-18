@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,14 @@ DADOS = Path(__file__).parent / "dados"
 def codex_de_mentira(tmp_path, monkeypatch):
     """Nenhum teste pode mexer no config.toml do Codex de verdade: salvar as configurações liga o Forja3D nele."""
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex_de_teste"))
+
+
+@pytest.fixture(autouse=True)
+def lixo_coletado_na_thread_principal():
+    """A janela que um teste fecha vira lixo. Se a coleta cair na thread de trabalho do teste seguinte,
+    o Qt destrói a janela fora da thread principal e o processo cai: no Linux, com falha de segmentação."""
+    yield
+    gc.collect()
 
 
 @pytest.fixture
